@@ -55,12 +55,15 @@ export default function StaffPage() {
 
   const submit = async () => {
     const values = await form.validateFields()
-    const payload = {
+    const raw = {
       ...values,
       hire_date: values.hire_date?.format('YYYY-MM-DD'),
       cert_issue_date: values.cert_issue_date?.format('YYYY-MM-DD'),
       cert_expiry_date: values.cert_expiry_date?.format('YYYY-MM-DD'),
     }
+    // 清空的下拉/日期值为 undefined，JSON 序列化会丢弃导致后端不更新；
+    // 显式转为 null，后端收到后写入 NULL 清空原值
+    const payload = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v ?? null]))
     if (editing) {
       await api.put(`/staff/${editing.id}`, payload)
       message.success('人员信息已更新')

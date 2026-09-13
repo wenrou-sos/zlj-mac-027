@@ -67,12 +67,15 @@ export default function Purchases() {
 
   const submit = async () => {
     const values = await form.validateFields()
-    const payload = {
+    const raw = {
       ...values,
       purchase_date: values.purchase_date?.format('YYYY-MM-DD'),
       production_date: values.production_date?.format('YYYY-MM-DD'),
       expiry_date: values.expiry_date?.format('YYYY-MM-DD'),
     }
+    // 清空的下拉/日期值为 undefined，JSON 序列化会丢弃导致后端不更新；
+    // 显式转为 null，后端收到后写入 NULL 清空原值
+    const payload = Object.fromEntries(Object.entries(raw).map(([k, v]) => [k, v ?? null]))
     if (editing) {
       await api.put(`/purchases/${editing.id}`, payload)
       message.success('采购记录已更新')
