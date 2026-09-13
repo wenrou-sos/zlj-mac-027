@@ -29,8 +29,9 @@ async def _loop():
                                  .order_by(InspectionRun.started_at.desc())
                                  .first())
                     if due and (last_auto is None or last_auto.started_at < due):
-                        run, items = execute_inspection(db, "自动")
-                        print(f"🕐 自动巡检完成 @ {now:%H:%M}，新开工单 {run.created_count} 张")
+                        run, result = execute_inspection(db, "自动")
+                        print(f"🕐 自动巡检完成 @ {now:%H:%M}，新开 {run.created_count} 单，"
+                              f"自动关闭 {result['closed']} 单")
             finally:
                 db.close()
         except Exception as exc:

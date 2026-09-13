@@ -83,7 +83,10 @@ def last_successful_run(db: Session) -> InspectionRun | None:
 
 
 def inspection_stale(db: Session, now: datetime | None = None) -> bool:
-    """巡检是否长时间未成功运行"""
+    """巡检是否长时间未成功运行（停用自动巡检时不参与判断）"""
+    cfg = get_inspection_config(db)
+    if not cfg["enabled"]:
+        return False
     now = now or datetime.now()
     last = last_successful_run(db)
     return last is None or (now - last.finished_at) > timedelta(hours=STALE_HOURS)
@@ -158,25 +161,69 @@ def compute_alerts(db: Session) -> list[dict]:
                 "description": f"责任人 {r.responsible}，整改期限 {r.deadline}，已逾期{(today - r.deadline).days}天",
             })
 
-    # 5. 巡检自身健康：长时间未成功运行 -> 预警
-    last_ok = last_successful_run(db)
-    if last_ok is None:
-        alerts.append({
-            "type": "system", "level": "warning", "related_id": None,
-            "title": "自动巡检从未成功运行",
-            "description": "请检查自动巡检配置（异常与整改页）或后端服务状态",
-        })
-    elif (now - last_ok.finished_at) > timedelta(hours=STALE_HOURS):
-        alerts.append({
-            "type": "system", "level": "warning", "related_id": None,
-            "title": "自动巡检长时间未成功运行",
-            "description": f"最近一次成功运行为 {last_ok.finished_at.strftime('%m-%d %H:%M')}，"
-                           f"已超过{STALE_HOURS}小时，超期留样等问题可能无法及时开单",
-        })
+    # 5. 巡检自身健康：长时间未成功运行 -> 预警（停用自动巡检时不报警）
+    if get_inspection_config(db)["enabled"]:
+        last_ok = last_successful_run(db)
+        if last_ok is None:
+            alerts.append({
+                "type": "system", "level": "warning", "related_id": None,
+                "title": "自动巡检从未成功运行",
+                "description": "请检查自动巡检配置（异常与整改页）或后端服务状态",
+            })
+        elif (now - last_ok.finished_at) > timedelta(hours=STALE_HOURS):
+            alerts.append({
+                "type": "system", "level": "warning", "related_id": None,
+                "title": "自动巡检长时间未成功运行",
+                "description": f"最近一次成功运行为 {last_ok.finished_at.strftime('%m-%d %H:%M')}，"
+                               f"已超过{STALE_HOURS}小时，超期留样等问题可能无法及时开单",
+            })
 
     level_order = {"danger": 0, "warning": 1, "info": 2}
     alerts.sort(key=lambda a: level_order.get(a["level"], 3))
     return alerts
+
+
+def reconcile_incidents(db: Session) -> list[Incident]:
+    """复查系统巡检生成的未关闭工单：关联问题已消除的自动关闭。
+    消除条件按工单关联对象判断：证书已换发/人员离职、食材已处理、
+    留样已销毁、整改已完成，或关联记录已删除。"""
+    now = datetime.now()
+    today = date.today()
+    closed: list[Incident] = []
+
+    open_system = db.query(Incident).filter(
+        Incident.source == "系统巡检",
+        Incident.status.in_(["待处理", "整改中"]),
+    ).all()
+
+    for inc in open_system:
+        resolved = False
+        if inc.related_type == "staff":
+            st = db.get(Staff, inc.related_id)
+            resolved = (st is None or st.status != "在职"
+                        or st.cert_expiry_date is None
+                        or st.cert_expiry_date >= today)
+        elif inc.related_type == "purchase":
+            p = db.get(Purchase, inc.related_id)
+            resolved = (p is None or p.status == "不合格"
+                        or p.expiry_date is None
+                        or p.expiry_date >= today)
+        elif inc.related_type == "sample":
+            s = db.get(Sample, inc.related_id)
+            resolved = s is None or s.status != "留样中"
+        elif inc.related_type == "rectification":
+            r = db.get(Rectification, inc.related_id)
+            resolved = r is None or r.status == "已完成"
+        # 未知关联类型不自动关闭，留人工处理
+
+        if resolved:
+            inc.status = "已关闭"
+            inc.closed_at = now
+            inc.description = (inc.description or "") + (
+                f"\n[系统复查] {now.strftime('%Y-%m-%d %H:%M')} 问题已消除，工单自动关闭。"
+            )
+            closed.append(inc)
+    return closed
 
 
 def run_inspection(db: Session) -> dict:
@@ -252,24 +299,31 @@ def run_inspection(db: Session) -> dict:
                 db.add(inc)
                 created.append(inc)
 
+    # 5. 复查已开系统工单：问题已消除的自动关闭
+    closed = reconcile_incidents(db)
+
     db.commit()
-    return {"created": len(created), "items": [{"id": i.id, "title": i.title} for i in created]}
+    return {
+        "created": len(created),
+        "items": [{"id": i.id, "title": i.title} for i in created],
+        "closed": len(closed),
+        "closed_items": [{"id": i.id, "title": i.title} for i in closed],
+    }
 
 
-def execute_inspection(db: Session, trigger: str = "手动") -> tuple[InspectionRun, list[dict]]:
+def execute_inspection(db: Session, trigger: str = "手动") -> tuple[InspectionRun, dict]:
     """执行一次巡检并落库运行记录。trigger: 自动/手动。
-    返回 (运行记录, 新开工单列表)。"""
+    返回 (运行记录, 巡检结果{created/items/closed/closed_items})。"""
     run = InspectionRun(trigger=trigger, started_at=datetime.now(), status="失败")
     db.add(run)
     db.commit()
     db.refresh(run)
 
-    items: list[dict] = []
+    result: dict = {"created": 0, "items": [], "closed": 0, "closed_items": []}
     try:
         result = run_inspection(db)
         run.status = "成功"
         run.created_count = result["created"]
-        items = result["items"]
     except Exception as exc:  # 记录失败，供"长时间未成功"告警发现
         db.rollback()
         run.status = "失败"
@@ -277,4 +331,4 @@ def execute_inspection(db: Session, trigger: str = "手动") -> tuple[Inspection
     run.finished_at = datetime.now()
     db.commit()
     db.refresh(run)
-    return run, items
+    return run, result

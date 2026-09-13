@@ -50,7 +50,7 @@ export default function Incidents() {
 
   const runInspection = async () => {
     const res = await api.post('/inspection/run')
-    message.success(`巡检完成，新生成 ${res.created} 条异常工单`)
+    message.success(`巡检完成：新开 ${res.created} 单，问题已消除自动关闭 ${res.closed} 单`)
     load()
     loadInsp()
   }
@@ -164,9 +164,11 @@ export default function Incidents() {
           type={insp.stale ? 'error' : 'info'}
           showIcon
           message={
-            insp.stale
-              ? `自动巡检已超过${insp.stale_after_hours}小时未成功运行，请检查配置或服务状态！`
-              : '自动巡检运行正常'
+            !insp.enabled
+              ? '自动巡检已停用，系统不会定时开单，可手动触发巡检'
+              : insp.stale
+                ? `自动巡检已超过${insp.stale_after_hours}小时未成功运行，请检查配置或服务状态！`
+                : '自动巡检运行正常'
           }
           description={
             <Space wrap size="middle">

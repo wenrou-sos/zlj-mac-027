@@ -69,7 +69,7 @@ def update_config(data: InspectionConfigIn, db: Session = Depends(get_db)):
 @router.post("/run")
 def manual_run(db: Session = Depends(get_db)):
     """手动触发一次巡检（同样落库运行记录）"""
-    run, items = execute_inspection(db, "手动")
+    run, result = execute_inspection(db, "手动")
     if run.status != "成功":
         raise HTTPException(500, f"巡检执行失败：{run.error}")
-    return {"created": run.created_count, "items": items}
+    return result

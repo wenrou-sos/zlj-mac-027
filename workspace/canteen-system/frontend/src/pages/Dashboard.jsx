@@ -29,7 +29,7 @@ export default function Dashboard() {
     setInspecting(true)
     try {
       const res = await api.post('/inspection/run')
-      message.success(`巡检完成，新生成 ${res.created} 条异常工单`)
+      message.success(`巡检完成：新开 ${res.created} 单，自动关闭 ${res.closed} 单`)
       load()
     } finally {
       setInspecting(false)
