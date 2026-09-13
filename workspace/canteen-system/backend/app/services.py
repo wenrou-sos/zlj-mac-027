@@ -1,15 +1,92 @@
-"""业务逻辑：预警计算、系统巡检（自动生成异常工单）"""
-from datetime import date, datetime
+"""业务逻辑：预警计算、系统巡检（自动生成异常工单）、自动巡检调度"""
+import json
+from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from .models import Incident, Purchase, Rectification, Sample, Staff
+from .models import Incident, InspectionRun, Purchase, Rectification, Sample, Setting, Staff
 
 # 预警阈值常量
 SAMPLE_RETENTION_HOURS = 48      # 留样保存时长(小时)
 SAMPLE_WARN_HOURS = 2            # 留样到期前提醒(小时)
 CERT_WARN_DAYS = 30              # 健康证到期前提醒(天)
 PURCHASE_WARN_DAYS = 3           # 食材临期提醒(天)
+
+# 自动巡检配置
+DEFAULT_RUN_TIMES = ["07:00", "13:00", "19:00"]  # 默认每日三班各巡检一次
+STALE_HOURS = 24                                 # 超过该时长未成功运行即告警
+
+
+# ---------- 巡检配置 ----------
+def _get_setting(db: Session, key: str) -> str | None:
+    row = db.get(Setting, key)
+    return row.value if row else None
+
+
+def _set_setting(db: Session, key: str, value: str) -> None:
+    row = db.get(Setting, key)
+    if row:
+        row.value = value
+    else:
+        db.add(Setting(key=key, value=value))
+
+
+def get_inspection_config(db: Session) -> dict:
+    """读取自动巡检配置；首次访问时写入默认值"""
+    enabled = _get_setting(db, "inspection.enabled")
+    times = _get_setting(db, "inspection.run_times")
+    if enabled is None or times is None:
+        _set_setting(db, "inspection.enabled", "true")
+        _set_setting(db, "inspection.run_times", json.dumps(DEFAULT_RUN_TIMES))
+        db.commit()
+        enabled, times = "true", json.dumps(DEFAULT_RUN_TIMES)
+    return {"enabled": enabled == "true", "run_times": json.loads(times)}
+
+
+def save_inspection_config(db: Session, enabled: bool, run_times: list[str]) -> None:
+    times = sorted(set(run_times))
+    _set_setting(db, "inspection.enabled", "true" if enabled else "false")
+    _set_setting(db, "inspection.run_times", json.dumps(times))
+    db.commit()
+
+
+# ---------- 调度计算 ----------
+def latest_scheduled_occurrence(run_times: list[str], now: datetime) -> datetime | None:
+    """各配置时刻最近一次应运行的时点中的最晚者（用于判断是否到点/漏跑）"""
+    occurrences = []
+    for t in run_times:
+        h, m = int(t[:2]), int(t[3:5])
+        dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if dt > now:
+            dt -= timedelta(days=1)
+        occurrences.append(dt)
+    return max(occurrences) if occurrences else None
+
+
+def compute_next_run(run_times: list[str], now: datetime) -> datetime | None:
+    """下一次计划运行时刻"""
+    candidates = []
+    for t in run_times:
+        h, m = int(t[:2]), int(t[3:5])
+        dt = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if dt <= now:
+            dt += timedelta(days=1)
+        candidates.append(dt)
+    return min(candidates) if candidates else None
+
+
+def last_successful_run(db: Session) -> InspectionRun | None:
+    return (db.query(InspectionRun)
+            .filter(InspectionRun.status == "成功")
+            .order_by(InspectionRun.finished_at.desc())
+            .first())
+
+
+def inspection_stale(db: Session, now: datetime | None = None) -> bool:
+    """巡检是否长时间未成功运行"""
+    now = now or datetime.now()
+    last = last_successful_run(db)
+    return last is None or (now - last.finished_at) > timedelta(hours=STALE_HOURS)
 
 
 def compute_alerts(db: Session) -> list[dict]:
@@ -80,6 +157,22 @@ def compute_alerts(db: Session) -> list[dict]:
                 "title": f"整改已逾期：{r.measures[:20]}...",
                 "description": f"责任人 {r.responsible}，整改期限 {r.deadline}，已逾期{(today - r.deadline).days}天",
             })
+
+    # 5. 巡检自身健康：长时间未成功运行 -> 预警
+    last_ok = last_successful_run(db)
+    if last_ok is None:
+        alerts.append({
+            "type": "system", "level": "warning", "related_id": None,
+            "title": "自动巡检从未成功运行",
+            "description": "请检查自动巡检配置（异常与整改页）或后端服务状态",
+        })
+    elif (now - last_ok.finished_at) > timedelta(hours=STALE_HOURS):
+        alerts.append({
+            "type": "system", "level": "warning", "related_id": None,
+            "title": "自动巡检长时间未成功运行",
+            "description": f"最近一次成功运行为 {last_ok.finished_at.strftime('%m-%d %H:%M')}，"
+                           f"已超过{STALE_HOURS}小时，超期留样等问题可能无法及时开单",
+        })
 
     level_order = {"danger": 0, "warning": 1, "info": 2}
     alerts.sort(key=lambda a: level_order.get(a["level"], 3))
@@ -161,3 +254,27 @@ def run_inspection(db: Session) -> dict:
 
     db.commit()
     return {"created": len(created), "items": [{"id": i.id, "title": i.title} for i in created]}
+
+
+def execute_inspection(db: Session, trigger: str = "手动") -> tuple[InspectionRun, list[dict]]:
+    """执行一次巡检并落库运行记录。trigger: 自动/手动。
+    返回 (运行记录, 新开工单列表)。"""
+    run = InspectionRun(trigger=trigger, started_at=datetime.now(), status="失败")
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    items: list[dict] = []
+    try:
+        result = run_inspection(db)
+        run.status = "成功"
+        run.created_count = result["created"]
+        items = result["items"]
+    except Exception as exc:  # 记录失败，供"长时间未成功"告警发现
+        db.rollback()
+        run.status = "失败"
+        run.error = str(exc)[:500]
+    run.finished_at = datetime.now()
+    db.commit()
+    db.refresh(run)
+    return run, items

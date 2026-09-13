@@ -1,4 +1,4 @@
-"""仪表盘统计 + 预警聚合 + 系统巡检"""
+"""仪表盘统计 + 预警聚合"""
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Incident, Purchase, Rectification, Sample, Staff
 from ..schemas import Alert
-from ..services import CERT_WARN_DAYS, SAMPLE_WARN_HOURS, compute_alerts, run_inspection
+from ..services import CERT_WARN_DAYS, SAMPLE_WARN_HOURS, compute_alerts
 
 router = APIRouter(prefix="/api", tags=["仪表盘"])
 
@@ -16,12 +16,6 @@ router = APIRouter(prefix="/api", tags=["仪表盘"])
 @router.get("/alerts", response_model=list[Alert])
 def get_alerts(db: Session = Depends(get_db)):
     return compute_alerts(db)
-
-
-@router.post("/inspection/run")
-def inspection(db: Session = Depends(get_db)):
-    """手动触发系统巡检：自动生成异常工单（健康证过期/食材过期/留样超期/整改逾期）"""
-    return run_inspection(db)
 
 
 @router.get("/dashboard")

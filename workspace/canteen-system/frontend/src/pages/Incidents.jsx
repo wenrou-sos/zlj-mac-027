@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import {
-  Button, Card, DatePicker, Descriptions, Drawer, Empty, Form, Input, Modal,
-  Popconfirm, Select, Space, Table, Tag, Timeline, Typography, message,
+  Alert, Button, Card, DatePicker, Descriptions, Drawer, Empty, Form, Input, Modal,
+  Popconfirm, Select, Space, Switch, Table, Tag, TimePicker, Timeline, Typography, message,
 } from 'antd'
-import { PlusOutlined, ReloadOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
+import { MinusCircleOutlined, PlusOutlined, ReloadOutlined, SafetyCertificateOutlined, SettingOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../api'
 
@@ -22,8 +22,11 @@ export default function Incidents() {
   const [rectOpen, setRectOpen] = useState(false)     // 新建整改
   const [completeTarget, setCompleteTarget] = useState(null) // 完成整改
   const [completeResult, setCompleteResult] = useState('')
+  const [insp, setInsp] = useState(null)              // 巡检状态
+  const [cfgOpen, setCfgOpen] = useState(false)       // 巡检配置弹窗
   const [form] = Form.useForm()
   const [rectForm] = Form.useForm()
+  const [cfgForm] = Form.useForm()
 
   const load = async () => {
     setLoading(true)
@@ -36,12 +39,37 @@ export default function Incidents() {
     }
   }
 
+  const loadInsp = () => api.get('/inspection/status').then(setInsp).catch(() => {})
+
   useEffect(() => { load() }, [filters])
+  useEffect(() => {
+    loadInsp()
+    const timer = setInterval(() => { loadInsp(); load() }, 60000)
+    return () => clearInterval(timer)
+  }, [])
 
   const runInspection = async () => {
     const res = await api.post('/inspection/run')
     message.success(`巡检完成，新生成 ${res.created} 条异常工单`)
     load()
+    loadInsp()
+  }
+
+  const openCfg = () => {
+    cfgForm.setFieldsValue({
+      enabled: insp?.enabled ?? true,
+      run_times: (insp?.run_times ?? []).map((t) => dayjs(t, 'HH:mm')),
+    })
+    setCfgOpen(true)
+  }
+
+  const submitCfg = async () => {
+    const v = await cfgForm.validateFields()
+    const run_times = (v.run_times || []).filter(Boolean).map((d) => d.format('HH:mm'))
+    await api.put('/inspection/config', { enabled: v.enabled, run_times })
+    message.success('巡检配置已保存')
+    setCfgOpen(false)
+    loadInsp()
   }
 
   const submitReport = async () => {
@@ -129,6 +157,39 @@ export default function Incidents() {
         </Space>
       }
     >
+      {/* 自动巡检状态条 */}
+      {insp && (
+        <Alert
+          style={{ marginBottom: 16 }}
+          type={insp.stale ? 'error' : 'info'}
+          showIcon
+          message={
+            insp.stale
+              ? `自动巡检已超过${insp.stale_after_hours}小时未成功运行，请检查配置或服务状态！`
+              : '自动巡检运行正常'
+          }
+          description={
+            <Space wrap size="middle">
+              <span>
+                自动巡检：{insp.enabled
+                  ? <Tag color="green">已启用（每日 {insp.run_times.join(' / ')}）</Tag>
+                  : <Tag>已停用</Tag>}
+              </span>
+              <span>
+                最近运行：{insp.last_run
+                  ? `${dayjs(insp.last_run.started_at).format('MM-DD HH:mm')}（${insp.last_run.trigger}，新开 ${insp.last_run.created_count} 单，${insp.last_run.status}）`
+                  : '从未运行'}
+              </span>
+              <span>当前未处理工单：<b>{insp.open_incidents}</b> 条</span>
+              {insp.enabled && insp.next_run_at && (
+                <span>下次运行：{dayjs(insp.next_run_at).format('MM-DD HH:mm')}</span>
+              )}
+              <a onClick={openCfg}><SettingOutlined /> 配置</a>
+            </Space>
+          }
+        />
+      )}
+
       <Space wrap style={{ marginBottom: 16 }}>
         <Select allowClear placeholder="分类" style={{ width: 120 }}
           options={CATEGORIES.map((c) => ({ value: c, label: c }))}
@@ -299,6 +360,49 @@ export default function Incidents() {
           value={completeResult}
           onChange={(e) => setCompleteResult(e.target.value)}
         />
+      </Modal>
+
+      {/* 巡检配置 */}
+      <Modal
+        title="自动巡检配置"
+        open={cfgOpen}
+        onOk={submitCfg}
+        onCancel={() => setCfgOpen(false)}
+        okText="保存"
+        cancelText="取消"
+        destroyOnClose
+      >
+        <Form form={cfgForm} layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item name="enabled" label="启用自动巡检" valuePropName="checked">
+            <Switch checkedChildren="启用" unCheckedChildren="停用" />
+          </Form.Item>
+          <Form.Item label="每日运行时刻（到点自动扫描并开单，建议每班至少一次）">
+            <Form.List name="run_times">
+              {(fields, { add, remove }) => (
+                <>
+                  {fields.map((field) => (
+                    <Space key={field.key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
+                      <Form.Item
+                        {...field}
+                        noStyle
+                        rules={[{ required: true, message: '请选择时间' }]}
+                      >
+                        <TimePicker format="HH:mm" minuteStep={5} placeholder="运行时刻" />
+                      </Form.Item>
+                      <MinusCircleOutlined onClick={() => remove(field.name)} />
+                    </Space>
+                  ))}
+                  <Button type="dashed" block icon={<PlusOutlined />} onClick={() => add()}>
+                    添加运行时刻
+                  </Button>
+                </>
+              )}
+            </Form.List>
+          </Form.Item>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            服务重启后会自动补跑错过的最近一次班次；超过24小时未成功运行将触发预警。
+          </Typography.Text>
+        </Form>
       </Modal>
     </Card>
   )

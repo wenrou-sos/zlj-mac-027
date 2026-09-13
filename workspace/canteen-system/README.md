@@ -64,13 +64,17 @@ DATABASE_URL=postgresql+psycopg2://canteen:canteen123@localhost:5432/canteen \
 - 整改逾期自动标记并升级生成工单
 
 ### 系统巡检（自动预警引擎）
-手动点击「系统巡检」或调用 `POST /api/inspection/run`，自动扫描：
+巡检默认**自动运行**：每日 07:00 / 13:00 / 19:00 三班各一次（「异常与整改」页可修改启停与运行时刻），到点自动扫描；服务重启后自动补跑错过的最近一次班次，同一时刻槽位不会重复执行。也可随时点击「系统巡检」手动触发（`POST /api/inspection/run`）。每次扫描：
 1. 健康证已过期 → 生成「严重」工单
 2. 食材已过保质期 → 生成「较重」工单
 3. 留样超过48小时保存期未销毁 → 生成工单
 4. 整改逾期 → 更新状态并生成工单
 
 同一对象的未关闭工单不会重复生成。
+
+页面状态条实时显示：最近一次运行时刻/触发方式/新开单数、当前未处理工单数、下次计划运行时间；**超过24小时未成功运行**会进入全局预警列表并在页面红色告警。运行记录（含失败原因）落库于 `inspection_runs` 表。
+
+相关接口：`GET /api/inspection/status`（状态）、`PUT /api/inspection/config`（配置启停与时刻）。
 
 ## 目录结构
 
@@ -80,11 +84,12 @@ canteen-system/
 │   ├── app/
 │   │   ├── main.py          # 应用入口
 │   │   ├── database.py      # 数据库连接（DATABASE_URL 可切换 PG）
-│   │   ├── models.py        # 6 张表：供应商/采购/留样/人员/异常/整改
+│   │   ├── models.py        # 8 张表：供应商/采购/留样/人员/异常/整改/巡检记录/配置
 │   │   ├── schemas.py       # Pydantic 模型
 │   │   ├── services.py      # 预警计算 + 系统巡检
+│   │   ├── scheduler.py     # 自动巡检调度器（asyncio 后台任务）
 │   │   ├── seed.py          # 本地模拟数据
-│   │   └── routers/         # 6 组 REST API
+│   │   └── routers/         # 7 组 REST API
 │   └── requirements.txt
 ├── frontend/
 │   └── src/
@@ -101,7 +106,9 @@ canteen-system/
 |---|---|---|
 | GET | /api/dashboard | 仪表盘统计+图表+预警聚合 |
 | GET | /api/alerts | 实时预警列表 |
-| POST | /api/inspection/run | 系统巡检，自动生成异常工单 |
+| POST | /api/inspection/run | 手动触发一次巡检 |
+| GET | /api/inspection/status | 巡检状态（最近运行/未处理数/超时标志） |
+| PUT | /api/inspection/config | 配置自动巡检启停与每日运行时刻 |
 | GET/POST/PUT/DELETE | /api/purchases | 食材采购 CRUD |
 | GET/POST/DELETE | /api/samples | 留样登记/查询/删除 |
 | POST | /api/samples/{id}/dispose | 留样销毁登记 |

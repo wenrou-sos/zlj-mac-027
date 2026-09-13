@@ -127,3 +127,24 @@ class Rectification(Base):
     created_at = Column(DateTime, default=datetime.now)
 
     incident = relationship("Incident", back_populates="rectifications")
+
+
+class InspectionRun(Base):
+    """巡检运行记录（自动/手动）"""
+    __tablename__ = "inspection_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    trigger = Column(String(10), nullable=False)                  # 自动/手动
+    started_at = Column(DateTime, nullable=False, index=True)
+    finished_at = Column(DateTime)
+    status = Column(String(10), default="失败")                   # 成功/失败
+    created_count = Column(Integer, default=0)                    # 本次新开工单数
+    error = Column(String(500))                                   # 失败原因
+
+
+class Setting(Base):
+    """系统配置（键值对），如自动巡检开关与运行时刻"""
+    __tablename__ = "settings"
+
+    key = Column(String(50), primary_key=True)
+    value = Column(String(500))
