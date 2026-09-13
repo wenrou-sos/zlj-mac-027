@@ -1,0 +1,25 @@
+# PostgreSQL 生产环境（可选）
+# 用法：docker compose up -d
+# 然后设置环境变量启动后端：
+#   DATABASE_URL=postgresql+psycopg2://canteen:canteen123@localhost:5432/canteen \
+#   python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: canteen-db
+    environment:
+      POSTGRES_USER: canteen
+      POSTGRES_PASSWORD: canteen123
+      POSTGRES_DB: canteen
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U canteen"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
