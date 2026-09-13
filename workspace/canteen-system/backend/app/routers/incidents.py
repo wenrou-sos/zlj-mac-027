@@ -115,15 +115,23 @@ def complete_rectification(rect_id: int, data: RectificationComplete, db: Sessio
 
 @router.post("/rectifications/{rect_id}/verify", response_model=RectificationOut)
 def verify_rectification(rect_id: int, data: RectificationVerify, db: Session = Depends(get_db)):
-    """验收通过后，关联异常工单标记为已整改"""
+    """验收整改任务；仅当工单下所有整改任务均验收通过后，工单才标记为已整改"""
     obj = db.get(Rectification, rect_id)
     if not obj:
         raise HTTPException(404, "整改任务不存在")
     if obj.status != "已完成":
         raise HTTPException(400, "请先完成整改再验收")
+    if obj.verified_at:
+        raise HTTPException(400, "该整改任务已验收")
     obj.verifier = data.verifier
     obj.verified_at = datetime.now()
-    obj.incident.status = "已整改"
+    # 全部整改任务均完成且验收通过，工单才可标记为已整改
+    all_verified = all(
+        r.status == "已完成" and (r.verified_at is not None or r.id == obj.id)
+        for r in obj.incident.rectifications
+    )
+    if all_verified:
+        obj.incident.status = "已整改"
     db.commit()
     db.refresh(obj)
     return rect_to_out(obj)

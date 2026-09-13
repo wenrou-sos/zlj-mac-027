@@ -85,11 +85,17 @@ export default function Samples() {
       r.disposed_at ? `${dayjs(r.disposed_at).format('MM-DD HH:mm')} / ${r.disposed_by}` : '-'
     ) },
     {
-      title: '操作', width: 130, fixed: 'right',
+      title: '操作', width: 150, fixed: 'right',
       render: (_, r) => (
         <Space>
           {r.status === '留样中' && (
-            <a onClick={() => setDisposeTarget(r)}>销毁登记</a>
+            r.remaining_hours <= 0 ? (
+              <a onClick={() => setDisposeTarget(r)}>销毁登记</a>
+            ) : (
+              <span style={{ color: '#bbb', cursor: 'not-allowed' }} title="留样满48小时后方可销毁">
+                未到期
+              </span>
+            )
           )}
           <Popconfirm title="确认删除该留样记录？" onConfirm={async () => { await api.delete(`/samples/${r.id}`); load() }}>
             <a style={{ color: '#cf1322' }}>删除</a>
@@ -166,7 +172,12 @@ export default function Samples() {
               <Select options={MEAL_TYPES.map((m) => ({ value: m, label: m }))} />
             </Form.Item>
             <Form.Item name="sample_time" label="留样时间" rules={[{ required: true, message: '请选择' }]} style={{ flex: 1.4 }}>
-              <DatePicker showTime={{ format: 'HH:mm' }} format="YYYY-MM-DD HH:mm" style={{ width: '100%' }} />
+              <DatePicker
+                showTime={{ format: 'HH:mm' }}
+                format="YYYY-MM-DD HH:mm"
+                style={{ width: '100%' }}
+                disabledDate={(d) => d && d.isAfter(dayjs(), 'day')}
+              />
             </Form.Item>
           </Space.Compact>
           <Space.Compact block>
@@ -199,9 +210,8 @@ export default function Samples() {
         cancelText="取消"
       >
         <p style={{ color: '#666' }}>
-          该留样 {disposeTarget && dayjs(disposeTarget.sample_time).format('MM-DD HH:mm')} 留样，
-          保存期48小时{disposeTarget?.remaining_hours < 0 ? '已满' : '未满'}。
-          确认销毁后不可恢复。
+          该留样于 {disposeTarget && dayjs(disposeTarget.sample_time).format('MM-DD HH:mm')} 留样，
+          48小时保存期已满。确认销毁后不可恢复。
         </p>
         <Input
           placeholder="销毁人姓名"

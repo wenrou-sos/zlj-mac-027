@@ -1,5 +1,5 @@
 """业务逻辑：预警计算、系统巡检（自动生成异常工单）"""
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
@@ -127,10 +127,9 @@ def run_inspection(db: Session) -> dict:
             db.add(inc)
             created.append(inc)
 
-    # 3. 留样超期未销毁 -> 自动生成工单
+    # 3. 留样超期未销毁 -> 自动生成工单（超过48小时截止仍未销毁即触发）
     now = datetime.now()
-    overdue_limit = now - timedelta(hours=6)  # 超过截止时间6小时仍未销毁视为异常
-    for s in db.query(Sample).filter(Sample.status == "留样中", Sample.retention_deadline < overdue_limit).all():
+    for s in db.query(Sample).filter(Sample.status == "留样中", Sample.retention_deadline < now).all():
         if not has_open_incident("sample", s.id):
             inc = Incident(
                 title=f"留样超期未处理：{s.dish_name}",

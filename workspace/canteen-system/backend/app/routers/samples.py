@@ -38,6 +38,8 @@ def list_samples(
 
 @router.post("", response_model=SampleOut, status_code=201)
 def create_sample(data: SampleCreate, db: Session = Depends(get_db)):
+    if data.sample_time > datetime.now():
+        raise HTTPException(400, "留样时间不能晚于当前时间")
     if data.weight_grams < 125:
         raise HTTPException(400, "留样重量不得少于125克")
     obj = Sample(
@@ -52,12 +54,17 @@ def create_sample(data: SampleCreate, db: Session = Depends(get_db)):
 
 @router.post("/{sample_id}/dispose", response_model=SampleOut)
 def dispose_sample(sample_id: int, data: SampleDispose, db: Session = Depends(get_db)):
-    """留样到期销毁登记"""
+    """留样到期销毁登记（未满48小时保存期不得销毁）"""
     obj = db.get(Sample, sample_id)
     if not obj:
         raise HTTPException(404, "留样记录不存在")
     if obj.status != "留样中":
         raise HTTPException(400, f"当前状态为「{obj.status}」，无法销毁")
+    if datetime.now() < obj.retention_deadline:
+        raise HTTPException(
+            400,
+            f"留样未满48小时保存期（{obj.retention_deadline.strftime('%m-%d %H:%M')} 到期），暂不能销毁",
+        )
     obj.status = "已销毁"
     obj.disposed_at = datetime.now()
     obj.disposed_by = data.disposed_by

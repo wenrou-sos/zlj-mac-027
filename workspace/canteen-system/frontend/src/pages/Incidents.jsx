@@ -78,7 +78,7 @@ export default function Incidents() {
 
   const verify = async (rect) => {
     await api.post(`/rectifications/${rect.id}/verify`, { verifier: '管理员' })
-    message.success('验收通过，工单已标记为已整改')
+    message.success('验收通过')
     load()
   }
 
