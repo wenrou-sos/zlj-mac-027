@@ -21,24 +21,39 @@ const actionColor = (a) => {
 
 export default function AuditLogs() {
   const [list, setList] = useState([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const [loading, setLoading] = useState(false)
   const [filters, setFilters] = useState({})
 
-  const load = async () => {
+  const load = async (p = page, ps = pageSize) => {
     setLoading(true)
     try {
-      const params = {}
+      const params = { page: p, page_size: ps }
       if (filters.action) params.action = filters.action
       if (filters.keyword) params.keyword = filters.keyword
       if (filters.range?.[0]) params.date_from = filters.range[0].format('YYYY-MM-DD')
       if (filters.range?.[1]) params.date_to = filters.range[1].format('YYYY-MM-DD')
-      setList(await api.get('/audit-logs', { params }))
+      const res = await api.get('/audit-logs', { params })
+      setList(res.items)
+      setTotal(res.total)
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [filters])
+  // 筛选条件变化时回到第1页
+  useEffect(() => {
+    setPage(1)
+    load(1, pageSize)
+  }, [filters])
+
+  const onPageChange = (p, ps) => {
+    setPage(p)
+    setPageSize(ps)
+    load(p, ps)
+  }
 
   const columns = [
     { title: '时间', dataIndex: 'created_at', width: 165, render: (v) => dayjs(v).format('YYYY-MM-DD HH:mm:ss') },
@@ -70,7 +85,15 @@ export default function AuditLogs() {
         loading={loading}
         columns={columns}
         dataSource={list}
-        pagination={{ pageSize: 15, showTotal: (t) => `共 ${t} 条` }}
+        pagination={{
+          current: page,
+          pageSize,
+          total,
+          showSizeChanger: true,
+          pageSizeOptions: [20, 50, 100],
+          showTotal: (t) => `共 ${t} 条`,
+          onChange: onPageChange,
+        }}
       />
     </Card>
   )

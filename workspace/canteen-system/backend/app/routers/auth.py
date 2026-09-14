@@ -52,11 +52,12 @@ def audit_logs(
     keyword: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
-    limit: int = 200,
+    page: int = 1,
+    page_size: int = 20,
     db: Session = Depends(get_db),
     user: dict = Depends(require_roles(ROLE_ADMIN)),
 ):
-    """操作日志查询（仅食品安全管理员）"""
+    """操作日志分页查询（仅食品安全管理员）"""
     q = db.query(AuditLog)
     if action:
         q = q.filter(AuditLog.action == action)
@@ -68,19 +69,29 @@ def audit_logs(
         q = q.filter(AuditLog.created_at >= datetime.combine(date_from, datetime.min.time()))
     if date_to:
         q = q.filter(AuditLog.created_at <= datetime.combine(date_to, datetime.max.time()))
-    rows = q.order_by(AuditLog.id.desc()).limit(min(limit, 1000)).all()
-    return [
-        {
-            "id": r.id,
-            "user_name": r.user_name,
-            "username": r.username,
-            "role": r.role,
-            "role_name": ROLE_NAMES.get(r.role, r.role),
-            "action": r.action,
-            "target_type": r.target_type,
-            "target_id": r.target_id,
-            "detail": r.detail,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-        }
-        for r in rows
-    ]
+
+    total = q.count()
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
+    rows = (q.order_by(AuditLog.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+            .all())
+    return {
+        "total": total,
+        "items": [
+            {
+                "id": r.id,
+                "user_name": r.user_name,
+                "username": r.username,
+                "role": r.role,
+                "role_name": ROLE_NAMES.get(r.role, r.role),
+                "action": r.action,
+                "target_type": r.target_type,
+                "target_id": r.target_id,
+                "detail": r.detail,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }

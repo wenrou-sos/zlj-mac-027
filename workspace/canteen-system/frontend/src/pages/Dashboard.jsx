@@ -11,6 +11,7 @@ import {
   ToolOutlined,
 } from '@ant-design/icons'
 import api from '../api'
+import { hasRole } from '../auth'
 import Chart from '../components/Chart'
 
 const levelColor = { danger: 'red', warning: 'orange', info: 'blue' }
@@ -57,9 +58,11 @@ export default function Dashboard() {
           style={{ marginBottom: 16 }}
           message={`当前有 ${data.alerts.filter((a) => a.level === 'danger').length} 条紧急预警，请立即处理！`}
           action={
-            <Button size="small" danger icon={<SafetyCertificateOutlined />} loading={inspecting} onClick={runInspection}>
-              系统巡检
-            </Button>
+            hasRole('admin') && (
+              <Button size="small" danger icon={<SafetyCertificateOutlined />} loading={inspecting} onClick={runInspection}>
+                系统巡检
+              </Button>
+            )
           }
         />
       )}
