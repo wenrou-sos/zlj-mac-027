@@ -26,31 +26,33 @@ def dashboard(db: Session = Depends(get_db), user: dict = Depends(get_current_us
     month_start = today.replace(day=1)
 
     # ---- 核心指标 ----
-    active_samples = db.query(Sample).filter(Sample.status == "留样中").all()
+    active_samples = db.query(Sample).filter(Sample.status == "留样中", Sample.voided_at.is_(None)).all()
     expiring_soon = sum(1 for s in active_samples
                         if 0 <= (s.retention_deadline - now).total_seconds() / 3600 <= SAMPLE_WARN_HOURS)
     pending_dispose = sum(1 for s in active_samples if s.retention_deadline < now)
     today_samples = sum(1 for s in active_samples if s.sample_time.date() == today)
 
-    staff_active = db.query(Staff).filter(Staff.status == "在职").all()
+    staff_active = db.query(Staff).filter(Staff.status == "在职", Staff.voided_at.is_(None)).all()
     cert_expiring = sum(1 for s in staff_active
                         if s.cert_expiry_date and 0 <= (s.cert_expiry_date - today).days <= CERT_WARN_DAYS)
     cert_expired = sum(1 for s in staff_active
                        if s.cert_expiry_date and s.cert_expiry_date < today)
 
-    open_incidents = db.query(Incident).filter(Incident.status.in_(["待处理", "整改中"])).count()
+    open_incidents = db.query(Incident).filter(Incident.status.in_(["待处理", "整改中"]),
+                                              Incident.voided_at.is_(None)).count()
     overdue_rects = db.query(Rectification).filter(
         Rectification.deadline < today,
         Rectification.status.in_(["待整改", "整改中", "已逾期"]),
     ).count()
 
     month_amount = db.query(func.coalesce(func.sum(Purchase.total_price), 0)).filter(
-        Purchase.purchase_date >= month_start).scalar()
+        Purchase.purchase_date >= month_start, Purchase.voided_at.is_(None)).scalar()
 
     # ---- 图表数据 ----
     # 采购分类占比（近30天）
     cat_rows = db.query(Purchase.category, func.sum(Purchase.total_price)).filter(
         Purchase.purchase_date >= today - timedelta(days=30),
+        Purchase.voided_at.is_(None),
     ).group_by(Purchase.category).all()
     purchase_by_category = [{"category": c, "amount": round(a or 0, 2)} for c, a in cat_rows]
 
@@ -59,11 +61,12 @@ def dashboard(db: Session = Depends(get_db), user: dict = Depends(get_current_us
     for i in range(6, -1, -1):
         d = today - timedelta(days=i)
         amt = db.query(func.coalesce(func.sum(Purchase.total_price), 0)).filter(
-            Purchase.purchase_date == d).scalar()
+            Purchase.purchase_date == d, Purchase.voided_at.is_(None)).scalar()
         purchase_last_7_days.append({"date": d.strftime("%m-%d"), "amount": round(amt, 2)})
 
     # 异常分类分布
-    inc_rows = db.query(Incident.category, func.count(Incident.id)).group_by(Incident.category).all()
+    inc_rows = (db.query(Incident.category, func.count(Incident.id))
+                .filter(Incident.voided_at.is_(None)).group_by(Incident.category).all())
     incident_by_category = [{"category": c, "count": n} for c, n in inc_rows]
 
     return {

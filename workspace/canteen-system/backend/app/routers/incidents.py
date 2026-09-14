@@ -9,7 +9,7 @@ from ..auth import ROLE_ADMIN, get_current_user, require_roles
 from ..database import get_db
 from ..models import Incident, Rectification
 from ..schemas import (IncidentCreate, IncidentOut, RectificationComplete,
-                       RectificationCreate, RectificationOut, RectificationVerify)
+                       RectificationCreate, RectificationOut, RectificationVerify, VoidIn)
 from ..services import log_action
 
 router = APIRouter(prefix="/api", tags=["异常与整改"])
@@ -36,10 +36,15 @@ def list_incidents(
     status: Optional[str] = None,
     severity: Optional[str] = None,
     keyword: Optional[str] = None,
+    view: str = "valid",  # valid有效(默认)/voided已作废/all全部
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     q = db.query(Incident)
+    if view == "valid":
+        q = q.filter(Incident.voided_at.is_(None))
+    elif view == "voided":
+        q = q.filter(Incident.voided_at.isnot(None))
     if category:
         q = q.filter(Incident.category == category)
     if status:
@@ -79,15 +84,44 @@ def close_incident(incident_id: int, db: Session = Depends(get_db),
     return incident_to_out(obj)
 
 
-@router.delete("/incidents/{incident_id}", status_code=204)
-def delete_incident(incident_id: int, db: Session = Depends(get_db),
-                    user: dict = ADMIN_ONLY):
+@router.post("/incidents/{incident_id}/void", response_model=IncidentOut)
+def void_incident(incident_id: int, data: VoidIn, db: Session = Depends(get_db),
+                  user: dict = ADMIN_ONLY):
+    """作废工单（如误报）：原记录与整改链保留可查"""
     obj = db.get(Incident, incident_id)
     if not obj:
         raise HTTPException(404, "异常工单不存在")
-    log_action(db, user, "删除工单", "incident", obj.id, f"删除工单「{obj.title}」")
-    db.delete(obj)
+    if obj.voided_at:
+        raise HTTPException(400, "该工单已作废")
+    if not data.reason.strip():
+        raise HTTPException(400, "请填写作废原因")
+    obj.voided_at = datetime.now()
+    obj.voided_by = user["name"]
+    obj.void_reason = data.reason.strip()
+    log_action(db, user, "工单作废", "incident", obj.id,
+               f"作废工单「{obj.title}」，原因：{obj.void_reason}")
     db.commit()
+    db.refresh(obj)
+    return incident_to_out(obj)
+
+
+@router.post("/incidents/{incident_id}/restore", response_model=IncidentOut)
+def restore_incident(incident_id: int, db: Session = Depends(get_db),
+                     user: dict = ADMIN_ONLY):
+    """恢复误作废的工单"""
+    obj = db.get(Incident, incident_id)
+    if not obj:
+        raise HTTPException(404, "异常工单不存在")
+    if not obj.voided_at:
+        raise HTTPException(400, "该工单未作废")
+    log_action(db, user, "工单恢复", "incident", obj.id,
+               f"恢复工单「{obj.title}」（原作废原因：{obj.void_reason}）")
+    obj.voided_at = None
+    obj.voided_by = None
+    obj.void_reason = None
+    db.commit()
+    db.refresh(obj)
+    return incident_to_out(obj)
 
 
 # ---------- 整改跟踪 ----------

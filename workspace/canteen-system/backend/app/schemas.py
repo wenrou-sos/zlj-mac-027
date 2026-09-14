@@ -5,6 +5,11 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict
 
 
+class VoidIn(BaseModel):
+    """作废/停用请求：原因必填，留档可查"""
+    reason: str
+
+
 # ---------- 供应商 ----------
 class SupplierBase(BaseModel):
     name: str
@@ -21,6 +26,9 @@ class SupplierCreate(SupplierBase):
 class SupplierOut(SupplierBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    voided_at: Optional[datetime] = None
+    void_reason: Optional[str] = None
+    voided_by: Optional[str] = None
 
 
 # ---------- 食材采购 ----------
@@ -72,6 +80,9 @@ class PurchaseOut(PurchaseBase):
     total_price: float
     supplier_name: Optional[str] = None
     days_to_expiry: Optional[int] = None   # 距过期天数(负数=已过期)
+    voided_at: Optional[datetime] = None
+    void_reason: Optional[str] = None
+    voided_by: Optional[str] = None
 
 
 # ---------- 留样 ----------
@@ -102,6 +113,9 @@ class SampleOut(SampleBase):
     disposed_at: Optional[datetime] = None
     disposed_by: Optional[str] = None
     remaining_hours: Optional[float] = None  # 距到期小时数(负数=已到期)
+    voided_at: Optional[datetime] = None
+    void_reason: Optional[str] = None
+    voided_by: Optional[str] = None
 
 
 # ---------- 从业人员 ----------
@@ -139,6 +153,9 @@ class StaffOut(StaffBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
     cert_days_remaining: Optional[int] = None  # 健康证剩余天数(负数=已过期)
+    voided_at: Optional[datetime] = None
+    void_reason: Optional[str] = None
+    voided_by: Optional[str] = None
 
 
 # ---------- 整改 ----------
@@ -198,6 +215,9 @@ class IncidentOut(IncidentBase):
     reported_at: datetime
     closed_at: Optional[datetime] = None
     rectifications: List[RectificationOut] = []
+    voided_at: Optional[datetime] = None
+    void_reason: Optional[str] = None
+    voided_by: Optional[str] = None
 
 
 # ---------- 预警 ----------

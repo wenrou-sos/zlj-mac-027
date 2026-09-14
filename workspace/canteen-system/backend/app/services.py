@@ -117,7 +117,7 @@ def compute_alerts(db: Session) -> list[dict]:
     alerts: list[dict] = []
 
     # 1. 留样预警
-    active_samples = db.query(Sample).filter(Sample.status == "留样中").all()
+    active_samples = db.query(Sample).filter(Sample.status == "留样中", Sample.voided_at.is_(None)).all()
     for s in active_samples:
         remaining = (s.retention_deadline - now).total_seconds() / 3600
         if remaining < 0:
@@ -134,7 +134,7 @@ def compute_alerts(db: Session) -> list[dict]:
             })
 
     # 2. 健康证预警
-    staff_list = db.query(Staff).filter(Staff.status == "在职").all()
+    staff_list = db.query(Staff).filter(Staff.status == "在职", Staff.voided_at.is_(None)).all()
     for st in staff_list:
         if not st.cert_expiry_date:
             continue
@@ -153,7 +153,8 @@ def compute_alerts(db: Session) -> list[dict]:
             })
 
     # 3. 食材保质期预警
-    purchases = db.query(Purchase).filter(Purchase.status != "不合格", Purchase.expiry_date.isnot(None)).all()
+    purchases = db.query(Purchase).filter(Purchase.status != "不合格", Purchase.expiry_date.isnot(None),
+                                          Purchase.voided_at.is_(None)).all()
     for p in purchases:
         days = (p.expiry_date - today).days
         if days < 0:
@@ -212,23 +213,24 @@ def reconcile_incidents(db: Session) -> list[Incident]:
     open_system = db.query(Incident).filter(
         Incident.source == "系统巡检",
         Incident.status.in_(["待处理", "整改中"]),
+        Incident.voided_at.is_(None),
     ).all()
 
     for inc in open_system:
         resolved = False
         if inc.related_type == "staff":
             st = db.get(Staff, inc.related_id)
-            resolved = (st is None or st.status != "在职"
+            resolved = (st is None or st.voided_at is not None or st.status != "在职"
                         or st.cert_expiry_date is None
                         or st.cert_expiry_date >= today)
         elif inc.related_type == "purchase":
             p = db.get(Purchase, inc.related_id)
-            resolved = (p is None or p.status == "不合格"
+            resolved = (p is None or p.voided_at is not None or p.status == "不合格"
                         or p.expiry_date is None
                         or p.expiry_date >= today)
         elif inc.related_type == "sample":
             s = db.get(Sample, inc.related_id)
-            resolved = s is None or s.status != "留样中"
+            resolved = s is None or s.voided_at is not None or s.status != "留样中"
         elif inc.related_type == "rectification":
             r = db.get(Rectification, inc.related_id)
             resolved = r is None or r.status == "已完成"
@@ -258,7 +260,7 @@ def run_inspection(db: Session) -> dict:
         ).first() is not None
 
     # 1. 健康证过期 -> 自动生成工单
-    for st in db.query(Staff).filter(Staff.status == "在职").all():
+    for st in db.query(Staff).filter(Staff.status == "在职", Staff.voided_at.is_(None)).all():
         if st.cert_expiry_date and st.cert_expiry_date < today and not has_open_incident("staff", st.id):
             inc = Incident(
                 title=f"健康证过期：{st.name}",
@@ -272,7 +274,8 @@ def run_inspection(db: Session) -> dict:
             created.append(inc)
 
     # 2. 食材过期 -> 自动生成工单
-    for p in db.query(Purchase).filter(Purchase.status != "不合格", Purchase.expiry_date.isnot(None)).all():
+    for p in db.query(Purchase).filter(Purchase.status != "不合格", Purchase.expiry_date.isnot(None),
+                                       Purchase.voided_at.is_(None)).all():
         if p.expiry_date < today and not has_open_incident("purchase", p.id):
             inc = Incident(
                 title=f"食材过期：{p.ingredient_name}",
@@ -287,7 +290,8 @@ def run_inspection(db: Session) -> dict:
 
     # 3. 留样超期未销毁 -> 自动生成工单（超过48小时截止仍未销毁即触发）
     now = datetime.now()
-    for s in db.query(Sample).filter(Sample.status == "留样中", Sample.retention_deadline < now).all():
+    for s in db.query(Sample).filter(Sample.status == "留样中", Sample.retention_deadline < now,
+                                     Sample.voided_at.is_(None)).all():
         if not has_open_incident("sample", s.id):
             inc = Incident(
                 title=f"留样超期未处理：{s.dish_name}",

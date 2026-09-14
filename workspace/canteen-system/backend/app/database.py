@@ -25,3 +25,29 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+# 归档式作废字段（各业务表统一）
+VOID_COLUMNS = {
+    "voided_at": "TIMESTAMP",
+    "void_reason": "VARCHAR(200)",
+    "voided_by": "VARCHAR(50)",
+}
+VOID_TABLES = ("samples", "purchases", "staff", "suppliers", "incidents")
+
+
+def run_migrations():
+    """轻量迁移：为已存在的数据库补充新增列（create_all 不会改已有表）"""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    existing_tables = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for table in VOID_TABLES:
+            if table not in existing_tables:
+                continue
+            existing_cols = {c["name"] for c in insp.get_columns(table)}
+            for col_name, col_type in VOID_COLUMNS.items():
+                if col_name not in existing_cols:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}"))
+                    print(f"  迁移：{table} 新增列 {col_name}")

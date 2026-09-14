@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .database import Base, SessionLocal, engine
+from .database import Base, SessionLocal, engine, run_migrations
 from .routers import auth, dashboard, incidents, inspection, purchases, samples, staff, suppliers
 from .scheduler import start_scheduler, stop_scheduler
 from .seed import seed
@@ -24,6 +24,7 @@ for r in (auth.router, dashboard.router, suppliers.router, purchases.router,
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
+    run_migrations()
     db = SessionLocal()
     try:
         seed(db)

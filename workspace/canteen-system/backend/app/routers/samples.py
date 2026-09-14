@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from ..auth import ROLE_ADMIN, ROLE_KEEPER, get_current_user, require_roles
 from ..database import get_db
 from ..models import Sample
-from ..schemas import SampleCreate, SampleDispose, SampleOut
+from ..schemas import SampleCreate, SampleDispose, SampleOut, VoidIn
 from ..services import SAMPLE_RETENTION_HOURS, log_action
 
 router = APIRouter(prefix="/api/samples", tags=["留样记录"])
@@ -28,10 +28,15 @@ def list_samples(
     meal_type: Optional[str] = None,
     status: Optional[str] = None,
     keyword: Optional[str] = None,
+    view: str = "valid",  # valid有效(默认)/voided已作废/all全部
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     q = db.query(Sample)
+    if view == "valid":
+        q = q.filter(Sample.voided_at.is_(None))
+    elif view == "voided":
+        q = q.filter(Sample.voided_at.isnot(None))
     if meal_type:
         q = q.filter(Sample.meal_type == meal_type)
     if status:
@@ -85,13 +90,41 @@ def dispose_sample(sample_id: int, data: SampleDispose, db: Session = Depends(ge
     return to_out(obj)
 
 
-@router.delete("/{sample_id}", status_code=204)
-def delete_sample(sample_id: int, db: Session = Depends(get_db),
-                  user: dict = Depends(require_roles(ROLE_ADMIN))):
+@router.post("/{sample_id}/void", response_model=SampleOut)
+def void_sample(sample_id: int, data: VoidIn, db: Session = Depends(get_db),
+                user: dict = Depends(require_roles(ROLE_ADMIN))):
+    """作废留样记录（如登记错误）：原记录保留可查，物理删除不提供"""
     obj = db.get(Sample, sample_id)
     if not obj:
         raise HTTPException(404, "留样记录不存在")
-    log_action(db, user, "删除留样", "sample", obj.id,
-               f"删除{obj.meal_type}留样「{obj.dish_name}」记录")
-    db.delete(obj)
+    if obj.voided_at:
+        raise HTTPException(400, "该记录已作废")
+    if not data.reason.strip():
+        raise HTTPException(400, "请填写作废原因")
+    obj.voided_at = datetime.now()
+    obj.voided_by = user["name"]
+    obj.void_reason = data.reason.strip()
+    log_action(db, user, "留样作废", "sample", obj.id,
+               f"作废{obj.meal_type}留样「{obj.dish_name}」，原因：{obj.void_reason}")
     db.commit()
+    db.refresh(obj)
+    return to_out(obj)
+
+
+@router.post("/{sample_id}/restore", response_model=SampleOut)
+def restore_sample(sample_id: int, db: Session = Depends(get_db),
+                   user: dict = Depends(require_roles(ROLE_ADMIN))):
+    """恢复误作废的留样记录"""
+    obj = db.get(Sample, sample_id)
+    if not obj:
+        raise HTTPException(404, "留样记录不存在")
+    if not obj.voided_at:
+        raise HTTPException(400, "该记录未作废")
+    log_action(db, user, "留样恢复", "sample", obj.id,
+               f"恢复{obj.meal_type}留样「{obj.dish_name}」（原作废原因：{obj.void_reason}）")
+    obj.voided_at = None
+    obj.voided_by = None
+    obj.void_reason = None
+    db.commit()
+    db.refresh(obj)
+    return to_out(obj)

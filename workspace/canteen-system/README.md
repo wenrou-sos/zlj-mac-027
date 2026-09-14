@@ -13,7 +13,9 @@
 | `purchaser` | purchaser123 | 采购员 | 仅采购与供应商维护，其余只读 |
 | `viewer` | viewer123 | 检查人员 | 全部只读 |
 
-**操作留痕**：登录、留样登记/销毁、采购登记/修改/作废、人员维护、异常上报、下达/完成/验收整改、关闭工单、手动巡检、巡检配置修改均自动写入操作日志（操作人、岗位、时间、对象、明细），管理员可在「操作日志」页查询。销毁人、验收人、上报人由后端从登录账号强制取值，客户端无法伪造。
+**操作留痕**：登录、留样登记/销毁/作废/恢复、采购登记/修改/作废/恢复、供应商登记/停用/恢复、人员维护、异常上报、下达/完成/验收整改、关闭/作废/恢复工单、手动巡检、巡检配置修改均自动写入操作日志（操作人、岗位、时间、对象、明细），管理员可在「操作日志」页查询。销毁人、验收人、上报人由后端从登录账号强制取值，客户端无法伪造。
+
+**归档式作废**：留样、采购、人员、供应商、工单均不提供物理删除，只能作废/停用——原记录连同作废原因、作废人、作废时间保留在库，各列表「已作废」视图可按时间查询，误作废可一键恢复（恢复同样留痕）。作废记录自动退出预警、巡检与统计口径；被作废对象关联的系统工单会在下次巡检时自动核销。
 
 > 令牌为 HMAC 签名（12 小时有效），密钥用环境变量 `SECRET_KEY` 配置；密码 PBKDF2 加盐哈希存储。演示账号仅用于本地模拟，生产部署请替换。
 
@@ -130,12 +132,19 @@ canteen-system/
 | POST | /api/inspection/run | 手动触发一次巡检 |
 | GET | /api/inspection/status | 巡检状态（最近运行/未处理数/超时标志） |
 | PUT | /api/inspection/config | 配置自动巡检启停与每日运行时刻 |
-| GET/POST/PUT/DELETE | /api/purchases | 食材采购 CRUD |
-| GET/POST/DELETE | /api/samples | 留样登记/查询/删除 |
+| GET/POST | /api/purchases | 采购登记/查询（view=valid/voided/all） |
+| PUT | /api/purchases/{id} | 修改采购 |
+| POST | /api/purchases/{id}/void、/restore | 作废/恢复采购 |
+| GET/POST | /api/suppliers | 供应商查询/登记 |
+| POST | /api/suppliers/{id}/void、/restore | 停用/恢复供应商 |
+| GET/POST | /api/samples | 留样登记/查询 |
 | POST | /api/samples/{id}/dispose | 留样销毁登记 |
-| GET/POST/PUT/DELETE | /api/staff | 从业人员健康证 CRUD |
+| POST | /api/samples/{id}/void、/restore | 作废/恢复留样 |
+| GET/POST/PUT | /api/staff | 从业人员健康证 |
+| POST | /api/staff/{id}/void、/restore | 作废/恢复档案 |
 | GET/POST | /api/incidents | 异常上报/查询 |
 | POST | /api/incidents/{id}/close | 关闭工单 |
+| POST | /api/incidents/{id}/void、/restore | 作废/恢复工单 |
 | GET/POST | /api/rectifications | 整改任务下达/查询 |
 | POST | /api/rectifications/{id}/complete | 完成整改 |
 | POST | /api/rectifications/{id}/verify | 验收通过 |

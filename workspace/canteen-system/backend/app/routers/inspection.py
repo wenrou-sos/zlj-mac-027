@@ -41,7 +41,8 @@ def inspection_status(db: Session = Depends(get_db), user: dict = Depends(get_cu
     cfg = get_inspection_config(db)
     last_run = db.query(InspectionRun).order_by(InspectionRun.started_at.desc()).first()
     last_ok = last_successful_run(db)
-    open_incidents = db.query(Incident).filter(Incident.status.in_(["待处理", "整改中"])).count()
+    open_incidents = db.query(Incident).filter(Incident.status.in_(["待处理", "整改中"]),
+                                              Incident.voided_at.is_(None)).count()
     next_run = compute_next_run(cfg["run_times"], datetime.now()) if cfg["enabled"] else None
     return {
         "enabled": cfg["enabled"],

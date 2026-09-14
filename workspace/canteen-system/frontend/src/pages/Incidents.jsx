@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import {
   Alert, Button, Card, DatePicker, Descriptions, Drawer, Empty, Form, Input, Modal,
-  Popconfirm, Select, Space, Switch, Table, Tag, TimePicker, Timeline, Typography, message,
+  Popconfirm, Segmented, Select, Space, Switch, Table, Tag, TimePicker, Timeline, Typography, message,
 } from 'antd'
 import { MinusCircleOutlined, PlusOutlined, ReloadOutlined, SafetyCertificateOutlined, SettingOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../api'
 import { getUser, hasRole } from '../auth'
+import VoidModal from '../components/VoidModal'
 
 const CATEGORIES = ['食材异常', '留样异常', '健康证异常', '环境卫生', '设备故障', '投诉', '其他']
 const SEVERITIES = ['一般', '较重', '严重']
@@ -25,6 +26,8 @@ export default function Incidents() {
   const [completeResult, setCompleteResult] = useState('')
   const [insp, setInsp] = useState(null)              // 巡检状态
   const [cfgOpen, setCfgOpen] = useState(false)       // 巡检配置弹窗
+  const [view, setView] = useState('valid')           // valid有效 / voided已作废
+  const [voidTarget, setVoidTarget] = useState(null)  // 作废工单
   const [form] = Form.useForm()
   const [rectForm] = Form.useForm()
   const [cfgForm] = Form.useForm()
@@ -34,7 +37,7 @@ export default function Incidents() {
   const load = async () => {
     setLoading(true)
     try {
-      const data = await api.get('/incidents', { params: filters })
+      const data = await api.get('/incidents', { params: { ...filters, view } })
       setList(data)
       if (detail) setDetail(data.find((i) => i.id === detail.id) ?? null)
     } finally {
@@ -44,7 +47,7 @@ export default function Incidents() {
 
   const loadInsp = () => api.get('/inspection/status').then(setInsp).catch(() => {})
 
-  useEffect(() => { load() }, [filters])
+  useEffect(() => { load() }, [filters, view])
   useEffect(() => {
     loadInsp()
     const timer = setInterval(() => { loadInsp(); load() }, 60000)
@@ -120,7 +123,20 @@ export default function Incidents() {
     load()
   }
 
-  const columns = [
+  const doVoid = async (reason) => {
+    await api.post(`/incidents/${voidTarget.id}/void`, { reason })
+    message.success('已作废，原工单可在「已作废」视图中查看')
+    setVoidTarget(null)
+    load()
+  }
+
+  const doRestore = async (id) => {
+    await api.post(`/incidents/${id}/restore`)
+    message.success('已恢复')
+    load()
+  }
+
+  const baseColumns = [
     { title: '编号', dataIndex: 'id', width: 60, render: (v) => `#${v}` },
     { title: '标题', dataIndex: 'title', width: 220, ellipsis: true },
     { title: '分类', dataIndex: 'category', width: 100, render: (v) => <Tag>{v}</Tag> },
@@ -132,9 +148,25 @@ export default function Incidents() {
     { title: '上报时间', dataIndex: 'reported_at', width: 150, render: (v) => dayjs(v).format('MM-DD HH:mm') },
     { title: '状态', dataIndex: 'status', width: 90, render: (v) => <Tag color={statusColor[v]}>{v}</Tag> },
     { title: '整改', width: 80, render: (_, r) => `${r.rectifications.length} 项` },
-    {
-      title: '操作', width: 150, fixed: 'right',
-      render: (_, r) => (
+  ]
+
+  const voidColumns = [
+    { title: '作废时间', dataIndex: 'voided_at', width: 140, render: (v) => dayjs(v).format('MM-DD HH:mm') },
+    { title: '作废原因', dataIndex: 'void_reason', width: 150, ellipsis: true },
+    { title: '作废人', dataIndex: 'voided_by', width: 90 },
+  ]
+
+  const actionColumn = {
+    title: '操作', width: 150, fixed: 'right',
+    render: (_, r) => {
+      if (view === 'voided') {
+        return isAdmin ? (
+          <Popconfirm title="确认恢复该工单？" onConfirm={() => doRestore(r.id)}>
+            <a>恢复</a>
+          </Popconfirm>
+        ) : <span style={{ color: '#bbb' }}>只读</span>
+      }
+      return (
         <Space>
           <a onClick={() => setDetail(r)}>详情{isAdmin && '/整改'}</a>
           {isAdmin && (r.status === '待处理' || r.status === '已整改') && (
@@ -142,10 +174,13 @@ export default function Incidents() {
               <a>关闭</a>
             </Popconfirm>
           )}
+          {isAdmin && <a style={{ color: '#cf1322' }} onClick={() => setVoidTarget(r)}>作废</a>}
         </Space>
-      ),
+      )
     },
-  ]
+  }
+
+  const columns = [...baseColumns, ...(view === 'voided' ? voidColumns : []), actionColumn]
 
   return (
     <Card
@@ -154,7 +189,7 @@ export default function Incidents() {
         <Space>
           {isAdmin && <Button icon={<SafetyCertificateOutlined />} onClick={runInspection}>系统巡检</Button>}
           <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
-          {isAdmin && (
+          {isAdmin && view === 'valid' && (
             <Button type="primary" icon={<PlusOutlined />}
               onClick={() => { form.resetFields(); form.setFieldsValue({ severity: '一般' }); setReportOpen(true) }}>
               异常上报
@@ -199,6 +234,11 @@ export default function Incidents() {
       )}
 
       <Space wrap style={{ marginBottom: 16 }}>
+        <Segmented
+          options={[{ value: 'valid', label: '有效工单' }, { value: 'voided', label: '已作废' }]}
+          value={view}
+          onChange={setView}
+        />
         <Select allowClear placeholder="分类" style={{ width: 120 }}
           options={CATEGORIES.map((c) => ({ value: c, label: c }))}
           onChange={(v) => setFilters((f) => ({ ...f, category: v }))} />
@@ -369,6 +409,14 @@ export default function Incidents() {
           onChange={(e) => setCompleteResult(e.target.value)}
         />
       </Modal>
+
+      {/* 工单作废 */}
+      <VoidModal
+        open={!!voidTarget}
+        title={`作废工单：${voidTarget?.title ?? ''}`}
+        onOk={doVoid}
+        onCancel={() => setVoidTarget(null)}
+      />
 
       {/* 巡检配置 */}
       <Modal

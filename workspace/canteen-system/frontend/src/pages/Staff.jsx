@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import {
   Alert, Button, Card, DatePicker, Form, Input, Modal, Popconfirm,
-  Select, Space, Table, Tag, message,
+  Segmented, Select, Space, Table, Tag, message,
 } from 'antd'
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../api'
 import { hasRole } from '../auth'
+import VoidModal from '../components/VoidModal'
 
 const POSITIONS = ['厨师长', '厨师', '面点师', '帮厨', '洗碗工', '采购员', '仓管员', '服务员']
 
@@ -23,19 +24,34 @@ export default function StaffPage() {
   const [filters, setFilters] = useState({})
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [view, setView] = useState('valid')      // valid有效 / voided已作废
+  const [voidTarget, setVoidTarget] = useState(null)
   const [form] = Form.useForm()
   const isAdmin = hasRole('admin')  // 人员档案仅食品安全管理员维护
 
   const load = async () => {
     setLoading(true)
     try {
-      setList(await api.get('/staff', { params: filters }))
+      setList(await api.get('/staff', { params: { ...filters, view } }))
     } finally {
       setLoading(false)
     }
   }
 
-  useEffect(() => { load() }, [filters])
+  useEffect(() => { load() }, [filters, view])
+
+  const doVoid = async (reason) => {
+    await api.post(`/staff/${voidTarget.id}/void`, { reason })
+    message.success('已作废，原档案可在「已作废」视图中查看')
+    setVoidTarget(null)
+    load()
+  }
+
+  const doRestore = async (id) => {
+    await api.post(`/staff/${id}/restore`)
+    message.success('已恢复为有效档案')
+    load()
+  }
 
   const openCreate = () => {
     setEditing(null)
@@ -80,7 +96,7 @@ export default function StaffPage() {
   const expired = list.filter((s) => s.status === '在职' && s.cert_days_remaining !== null && s.cert_days_remaining < 0)
   const expiring = list.filter((s) => s.status === '在职' && s.cert_days_remaining !== null && s.cert_days_remaining >= 0 && s.cert_days_remaining <= 30)
 
-  const columns = [
+  const baseColumns = [
     { title: '姓名', dataIndex: 'name', width: 90, fixed: 'left' },
     { title: '性别', dataIndex: 'gender', width: 60 },
     { title: '岗位', dataIndex: 'position', width: 90, render: (v) => <Tag>{v}</Tag> },
@@ -93,18 +109,34 @@ export default function StaffPage() {
     { title: '在职状态', dataIndex: 'status', width: 90, render: (v) => (
       <Tag color={v === '在职' ? 'green' : 'default'}>{v}</Tag>
     ) },
-    {
-      title: '操作', width: 120, fixed: 'right',
-      render: (_, r) => isAdmin ? (
+  ]
+
+  const voidColumns = [
+    { title: '作废时间', dataIndex: 'voided_at', width: 140, render: (v) => dayjs(v).format('MM-DD HH:mm') },
+    { title: '作废原因', dataIndex: 'void_reason', width: 150, ellipsis: true },
+    { title: '作废人', dataIndex: 'voided_by', width: 90 },
+  ]
+
+  const actionColumn = {
+    title: '操作', width: 120, fixed: 'right',
+    render: (_, r) => {
+      if (view === 'voided') {
+        return isAdmin ? (
+          <Popconfirm title="确认恢复为有效档案？" onConfirm={() => doRestore(r.id)}>
+            <a>恢复</a>
+          </Popconfirm>
+        ) : <span style={{ color: '#bbb' }}>只读</span>
+      }
+      return isAdmin ? (
         <Space>
           <a onClick={() => openEdit(r)}>编辑</a>
-          <Popconfirm title="确认删除该人员？" onConfirm={async () => { await api.delete(`/staff/${r.id}`); message.success('已删除'); load() }}>
-            <a style={{ color: '#cf1322' }}>删除</a>
-          </Popconfirm>
+          <a style={{ color: '#cf1322' }} onClick={() => setVoidTarget(r)}>作废</a>
         </Space>
-      ) : <span style={{ color: '#bbb' }}>只读</span>,
+      ) : <span style={{ color: '#bbb' }}>只读</span>
     },
-  ]
+  }
+
+  const columns = [...baseColumns, ...(view === 'voided' ? voidColumns : []), actionColumn]
 
   return (
     <Card
@@ -112,7 +144,7 @@ export default function StaffPage() {
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
-          {isAdmin && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>人员登记</Button>}
+          {isAdmin && view === 'valid' && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>人员登记</Button>}
         </Space>
       }
     >
@@ -130,6 +162,11 @@ export default function StaffPage() {
       )}
 
       <Space wrap style={{ marginBottom: 16 }}>
+        <Segmented
+          options={[{ value: 'valid', label: '有效档案' }, { value: 'voided', label: '已作废' }]}
+          value={view}
+          onChange={setView}
+        />
         <Select allowClear placeholder="岗位" style={{ width: 110 }}
           options={POSITIONS.map((p) => ({ value: p, label: p }))}
           onChange={(v) => setFilters((f) => ({ ...f, position: v }))} />
@@ -200,6 +237,14 @@ export default function StaffPage() {
           </Space.Compact>
         </Form>
       </Modal>
+
+      {/* 作废 */}
+      <VoidModal
+        open={!!voidTarget}
+        title={`作废人员档案：${voidTarget?.name ?? ''}`}
+        onOk={doVoid}
+        onCancel={() => setVoidTarget(null)}
+      />
 
       <style>{`.row-expired td { background: #fff1f0 !important; }`}</style>
     </Card>

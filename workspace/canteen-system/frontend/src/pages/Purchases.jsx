@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react'
 import {
   Button, Card, DatePicker, Form, Input, InputNumber, Modal, Popconfirm,
-  Select, Space, Table, Tag, message,
+  Segmented, Select, Space, Table, Tag, message,
 } from 'antd'
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
+import { PlusOutlined, ReloadOutlined, ShopOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../api'
 import { getUser, hasRole } from '../auth'
+import SupplierModal from '../components/SupplierModal'
+import VoidModal from '../components/VoidModal'
 
 const CATEGORIES = ['蔬菜', '肉类', '水产', '蛋奶', '粮油', '调味品', '水果', '其他']
 const UNITS = ['kg', 'g', 'L', '瓶', '桶', '袋', '盒', '杯', '罐', '个']
@@ -26,13 +28,17 @@ export default function Purchases() {
   const [filters, setFilters] = useState({})
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(null)
+  const [view, setView] = useState('valid')      // valid有效 / voided已作废
+  const [voidTarget, setVoidTarget] = useState(null)
+  const [supplierOpen, setSupplierOpen] = useState(false)
   const [form] = Form.useForm()
   const canEdit = hasRole('admin', 'purchaser')  // 采购维护权限
+  const isAdmin = hasRole('admin')
 
   const load = async () => {
     setLoading(true)
     try {
-      const params = {}
+      const params = { view }
       if (filters.category) params.category = filters.category
       if (filters.status) params.status = filters.status
       if (filters.keyword) params.keyword = filters.keyword
@@ -44,10 +50,15 @@ export default function Purchases() {
     }
   }
 
+  const loadSuppliers = () => api.get('/suppliers').then(setSuppliers).catch(() => {})
+
   useEffect(() => {
     load()
-    api.get('/suppliers').then(setSuppliers).catch(() => {})
-  }, [filters])
+  }, [filters, view])
+
+  useEffect(() => {
+    loadSuppliers()
+  }, [])
 
   const openCreate = () => {
     setEditing(null)
@@ -89,13 +100,20 @@ export default function Purchases() {
     load()
   }
 
-  const remove = async (id) => {
-    await api.delete(`/purchases/${id}`)
-    message.success('已删除')
+  const doVoid = async (reason) => {
+    await api.post(`/purchases/${voidTarget.id}/void`, { reason })
+    message.success('已作废，原记录可在「已作废」视图中查看')
+    setVoidTarget(null)
     load()
   }
 
-  const columns = [
+  const doRestore = async (id) => {
+    await api.post(`/purchases/${id}/restore`)
+    message.success('已恢复为有效记录')
+    load()
+  }
+
+  const baseColumns = [
     { title: '食材名称', dataIndex: 'ingredient_name', width: 110, fixed: 'left' },
     { title: '分类', dataIndex: 'category', width: 80, render: (v) => <Tag>{v}</Tag> },
     { title: '供应商', dataIndex: 'supplier_name', width: 170, ellipsis: true },
@@ -111,18 +129,34 @@ export default function Purchases() {
       <Tag color={v === '合格' ? 'green' : v === '待检' ? 'gold' : 'red'}>{v}</Tag>
     ) },
     { title: '存放位置', dataIndex: 'storage_location', width: 95 },
-    {
-      title: '操作', width: 120, fixed: 'right',
-      render: (_, r) => canEdit ? (
+  ]
+
+  const voidColumns = [
+    { title: '作废时间', dataIndex: 'voided_at', width: 140, render: (v) => dayjs(v).format('MM-DD HH:mm') },
+    { title: '作废原因', dataIndex: 'void_reason', width: 150, ellipsis: true },
+    { title: '作废人', dataIndex: 'voided_by', width: 90 },
+  ]
+
+  const actionColumn = {
+    title: '操作', width: 120, fixed: 'right',
+    render: (_, r) => {
+      if (view === 'voided') {
+        return isAdmin ? (
+          <Popconfirm title="确认恢复为有效记录？" onConfirm={() => doRestore(r.id)}>
+            <a>恢复</a>
+          </Popconfirm>
+        ) : <span style={{ color: '#bbb' }}>只读</span>
+      }
+      return canEdit ? (
         <Space>
           <a onClick={() => openEdit(r)}>编辑</a>
-          <Popconfirm title="确认删除该采购记录？" onConfirm={() => remove(r.id)}>
-            <a style={{ color: '#cf1322' }}>删除</a>
-          </Popconfirm>
+          <a style={{ color: '#cf1322' }} onClick={() => setVoidTarget(r)}>作废</a>
         </Space>
-      ) : <span style={{ color: '#bbb' }}>只读</span>,
+      ) : <span style={{ color: '#bbb' }}>只读</span>
     },
-  ]
+  }
+
+  const columns = [...baseColumns, ...(view === 'voided' ? voidColumns : []), actionColumn]
 
   return (
     <Card
@@ -130,11 +164,17 @@ export default function Purchases() {
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
-          {canEdit && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>采购登记</Button>}
+          <Button icon={<ShopOutlined />} onClick={() => setSupplierOpen(true)}>供应商管理</Button>
+          {canEdit && view === 'valid' && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>采购登记</Button>}
         </Space>
       }
     >
       <Space wrap style={{ marginBottom: 16 }}>
+        <Segmented
+          options={[{ value: 'valid', label: '有效记录' }, { value: 'voided', label: '已作废' }]}
+          value={view}
+          onChange={setView}
+        />
         <Select allowClear placeholder="分类" style={{ width: 110 }}
           options={CATEGORIES.map((c) => ({ value: c, label: c }))}
           onChange={(v) => setFilters((f) => ({ ...f, category: v }))} />
@@ -227,6 +267,21 @@ export default function Purchases() {
           </Form.Item>
         </Form>
       </Modal>
+
+      {/* 作废 */}
+      <VoidModal
+        open={!!voidTarget}
+        title={`作废采购记录：${voidTarget?.ingredient_name ?? ''}`}
+        onOk={doVoid}
+        onCancel={() => setVoidTarget(null)}
+      />
+
+      {/* 供应商管理 */}
+      <SupplierModal
+        open={supplierOpen}
+        onClose={() => setSupplierOpen(false)}
+        onChanged={loadSuppliers}
+      />
 
       <style>{`.row-expired td { background: #fff1f0 !important; }`}</style>
     </Card>

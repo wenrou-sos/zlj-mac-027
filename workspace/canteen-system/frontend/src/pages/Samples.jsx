@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import {
   Alert, Button, Card, DatePicker, Form, Input, InputNumber, Modal,
-  Popconfirm, Select, Space, Table, Tag, message,
+  Popconfirm, Segmented, Select, Space, Table, Tag, message,
 } from 'antd'
 import { DeleteOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../api'
 import { getUser, hasRole } from '../auth'
+import VoidModal from '../components/VoidModal'
 
 const MEAL_TYPES = ['早餐', '午餐', '晚餐', '加餐']
 
@@ -23,8 +24,10 @@ export default function Samples() {
   const [list, setList] = useState([])
   const [loading, setLoading] = useState(false)
   const [filters, setFilters] = useState({})
+  const [view, setView] = useState('valid')      // valid有效 / voided已作废
   const [modalOpen, setModalOpen] = useState(false)
   const [disposeTarget, setDisposeTarget] = useState(null)
+  const [voidTarget, setVoidTarget] = useState(null)
   const [form] = Form.useForm()
   const user = getUser()
   const canOperate = hasRole('admin', 'keeper')  // 留样登记/销毁权限
@@ -33,7 +36,7 @@ export default function Samples() {
   const load = async () => {
     setLoading(true)
     try {
-      setList(await api.get('/samples', { params: filters }))
+      setList(await api.get('/samples', { params: { ...filters, view } }))
     } finally {
       setLoading(false)
     }
@@ -43,7 +46,7 @@ export default function Samples() {
     load()
     const timer = setInterval(load, 60000) // 每分钟刷新倒计时
     return () => clearInterval(timer)
-  }, [filters])
+  }, [filters, view])
 
   const submit = async () => {
     const values = await form.validateFields()
@@ -64,10 +67,23 @@ export default function Samples() {
     load()
   }
 
+  const doVoid = async (reason) => {
+    await api.post(`/samples/${voidTarget.id}/void`, { reason })
+    message.success('已作废，原记录可在「已作废」视图中查看')
+    setVoidTarget(null)
+    load()
+  }
+
+  const doRestore = async (id) => {
+    await api.post(`/samples/${id}/restore`)
+    message.success('已恢复为有效记录')
+    load()
+  }
+
   const overdueCount = list.filter((s) => s.status === '留样中' && s.remaining_hours < 0).length
   const expiringCount = list.filter((s) => s.status === '留样中' && s.remaining_hours >= 0 && s.remaining_hours <= 2).length
 
-  const columns = [
+  const baseColumns = [
     { title: '菜品名称', dataIndex: 'dish_name', width: 130, fixed: 'left' },
     { title: '餐次', dataIndex: 'meal_type', width: 70, render: (v) => <Tag color="blue">{v}</Tag> },
     { title: '留样时间', dataIndex: 'sample_time', width: 150, render: (v) => dayjs(v).format('MM-DD HH:mm') },
@@ -83,9 +99,25 @@ export default function Samples() {
     { title: '销毁信息', width: 170, render: (_, r) => (
       r.disposed_at ? `${dayjs(r.disposed_at).format('MM-DD HH:mm')} / ${r.disposed_by}` : '-'
     ) },
-    {
-      title: '操作', width: 150, fixed: 'right',
-      render: (_, r) => (
+  ]
+
+  const voidColumns = [
+    { title: '作废时间', dataIndex: 'voided_at', width: 140, render: (v) => dayjs(v).format('MM-DD HH:mm') },
+    { title: '作废原因', dataIndex: 'void_reason', width: 170, ellipsis: true },
+    { title: '作废人', dataIndex: 'voided_by', width: 90 },
+  ]
+
+  const actionColumn = {
+    title: '操作', width: 140, fixed: 'right',
+    render: (_, r) => {
+      if (view === 'voided') {
+        return isAdmin ? (
+          <Popconfirm title="确认恢复为有效记录？" onConfirm={() => doRestore(r.id)}>
+            <a>恢复</a>
+          </Popconfirm>
+        ) : <span style={{ color: '#bbb' }}>只读</span>
+      }
+      return (
         <Space>
           {r.status === '留样中' && canOperate && (
             r.remaining_hours <= 0 ? (
@@ -96,15 +128,13 @@ export default function Samples() {
               </span>
             )
           )}
-          {isAdmin && (
-            <Popconfirm title="确认删除该留样记录？" onConfirm={async () => { await api.delete(`/samples/${r.id}`); load() }}>
-              <a style={{ color: '#cf1322' }}>删除</a>
-            </Popconfirm>
-          )}
+          {isAdmin && <a style={{ color: '#cf1322' }} onClick={() => setVoidTarget(r)}>作废</a>}
         </Space>
-      ),
+      )
     },
-  ]
+  }
+
+  const columns = [...baseColumns, ...(view === 'voided' ? voidColumns : []), actionColumn]
 
   return (
     <Card
@@ -112,7 +142,7 @@ export default function Samples() {
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
-          {canOperate && (
+          {canOperate && view === 'valid' && (
             <Button type="primary" icon={<PlusOutlined />}
               onClick={() => { form.resetFields(); form.setFieldsValue({ sample_time: dayjs(), weight_grams: 125, keeper: user?.name }); setModalOpen(true) }}>
               留样登记
@@ -135,6 +165,11 @@ export default function Samples() {
       )}
 
       <Space wrap style={{ marginBottom: 16 }}>
+        <Segmented
+          options={[{ value: 'valid', label: '有效记录' }, { value: 'voided', label: '已作废' }]}
+          value={view}
+          onChange={setView}
+        />
         <Select allowClear placeholder="餐次" style={{ width: 100 }}
           options={MEAL_TYPES.map((m) => ({ value: m, label: m }))}
           onChange={(v) => setFilters((f) => ({ ...f, meal_type: v }))} />
@@ -218,6 +253,14 @@ export default function Samples() {
         </p>
         <p>销毁人：<b>{user?.name}</b>（当前登录账号，自动记录）</p>
       </Modal>
+
+      {/* 作废 */}
+      <VoidModal
+        open={!!voidTarget}
+        title={`作废留样记录：${voidTarget?.dish_name ?? ''}`}
+        onOk={doVoid}
+        onCancel={() => setVoidTarget(null)}
+      />
 
       <style>{`.row-overdue td { background: #fff1f0 !important; }`}</style>
     </Card>

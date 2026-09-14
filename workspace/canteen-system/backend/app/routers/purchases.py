@@ -1,5 +1,5 @@
-"""食材采购 CRUD + 筛选"""
-from datetime import date
+"""食材采购 CRUD + 筛选（删除改为归档式作废）"""
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ..auth import ROLE_ADMIN, ROLE_PURCHASER, get_current_user, require_roles
 from ..database import get_db
 from ..models import Purchase
-from ..schemas import PurchaseCreate, PurchaseOut, PurchaseUpdate
+from ..schemas import PurchaseCreate, PurchaseOut, PurchaseUpdate, VoidIn
 from ..services import log_action
 
 router = APIRouter(prefix="/api/purchases", tags=["食材采购"])
@@ -31,10 +31,15 @@ def list_purchases(
     keyword: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    view: str = "valid",  # valid有效(默认)/voided已作废/all全部
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     q = db.query(Purchase)
+    if view == "valid":
+        q = q.filter(Purchase.voided_at.is_(None))
+    elif view == "voided":
+        q = q.filter(Purchase.voided_at.isnot(None))
     if category:
         q = q.filter(Purchase.category == category)
     if status:
@@ -77,13 +82,41 @@ def update_purchase(purchase_id: int, data: PurchaseUpdate, db: Session = Depend
     return to_out(obj)
 
 
-@router.delete("/{purchase_id}", status_code=204)
-def delete_purchase(purchase_id: int, db: Session = Depends(get_db),
-                    user: dict = Depends(require_roles(*PURCHASE_ROLES))):
+@router.post("/{purchase_id}/void", response_model=PurchaseOut)
+def void_purchase(purchase_id: int, data: VoidIn, db: Session = Depends(get_db),
+                  user: dict = Depends(require_roles(*PURCHASE_ROLES))):
+    """作废采购记录：原记录保留可查，物理删除不提供"""
     obj = db.get(Purchase, purchase_id)
     if not obj:
         raise HTTPException(404, "采购记录不存在")
+    if obj.voided_at:
+        raise HTTPException(400, "该记录已作废")
+    if not data.reason.strip():
+        raise HTTPException(400, "请填写作废原因")
+    obj.voided_at = datetime.now()
+    obj.voided_by = user["name"]
+    obj.void_reason = data.reason.strip()
     log_action(db, user, "采购作废", "purchase", obj.id,
-               f"作废采购「{obj.ingredient_name}」{obj.quantity}{obj.unit}记录")
-    db.delete(obj)
+               f"作废采购「{obj.ingredient_name}」{obj.quantity}{obj.unit}，原因：{obj.void_reason}")
     db.commit()
+    db.refresh(obj)
+    return to_out(obj)
+
+
+@router.post("/{purchase_id}/restore", response_model=PurchaseOut)
+def restore_purchase(purchase_id: int, db: Session = Depends(get_db),
+                     user: dict = Depends(require_roles(ROLE_ADMIN))):
+    """恢复误作废的采购记录（仅管理员）"""
+    obj = db.get(Purchase, purchase_id)
+    if not obj:
+        raise HTTPException(404, "采购记录不存在")
+    if not obj.voided_at:
+        raise HTTPException(400, "该记录未作废")
+    log_action(db, user, "采购恢复", "purchase", obj.id,
+               f"恢复采购「{obj.ingredient_name}」（原作废原因：{obj.void_reason}）")
+    obj.voided_at = None
+    obj.voided_by = None
+    obj.void_reason = None
+    db.commit()
+    db.refresh(obj)
+    return to_out(obj)

@@ -18,6 +18,10 @@ class Supplier(Base):
     license_no = Column(String(50))                               # 食品经营许可证号
     address = Column(String(200))
     created_at = Column(DateTime, default=datetime.now)
+    # 归档式作废（空=有效；作废后保留原记录可查）
+    voided_at = Column(DateTime)                                  # 作废时间
+    void_reason = Column(String(200))                             # 作废原因
+    voided_by = Column(String(50))                                # 作废操作人
 
     purchases = relationship("Purchase", back_populates="supplier")
 
@@ -45,6 +49,10 @@ class Purchase(Base):
     storage_location = Column(String(50))                         # 存放位置(冷库/常温库/冷藏柜...)
     remark = Column(String(200))
     created_at = Column(DateTime, default=datetime.now)
+    # 归档式作废（空=有效；作废后保留原记录可查）
+    voided_at = Column(DateTime)                                  # 作废时间
+    void_reason = Column(String(200))                             # 作废原因
+    voided_by = Column(String(50))                                # 作废操作人
 
     supplier = relationship("Supplier", back_populates="purchases")
 
@@ -67,7 +75,10 @@ class Sample(Base):
     disposed_by = Column(String(50))                              # 销毁人
     remark = Column(String(200))
     created_at = Column(DateTime, default=datetime.now)
-
+    # 归档式作废（空=有效；作废后保留原记录可查）
+    voided_at = Column(DateTime)                                  # 作废时间
+    void_reason = Column(String(200))                             # 作废原因
+    voided_by = Column(String(50))                                # 作废操作人
 
 class Staff(Base):
     """从业人员及健康证"""
@@ -85,6 +96,10 @@ class Staff(Base):
     cert_expiry_date = Column(Date, index=True)                   # 有效期至(健康证有效期1年)
     status = Column(String(10), default="在职")                   # 在职/离职
     created_at = Column(DateTime, default=datetime.now)
+    # 归档式作废（空=有效；作废后保留原记录可查）
+    voided_at = Column(DateTime)                                  # 作废时间
+    void_reason = Column(String(200))                             # 作废原因
+    voided_by = Column(String(50))                                # 作废操作人
 
 
 class Incident(Base):
@@ -103,6 +118,10 @@ class Incident(Base):
     status = Column(String(10), default="待处理", index=True)     # 待处理/整改中/已整改/已关闭
     reported_at = Column(DateTime, default=datetime.now)
     closed_at = Column(DateTime)
+    # 归档式作废（空=有效；作废后保留原记录可查）
+    voided_at = Column(DateTime)                                  # 作废时间
+    void_reason = Column(String(200))                             # 作废原因
+    voided_by = Column(String(50))                                # 作废操作人
 
     rectifications = relationship("Rectification", back_populates="incident",
                                   cascade="all, delete-orphan",

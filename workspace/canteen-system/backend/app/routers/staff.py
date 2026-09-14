@@ -1,5 +1,5 @@
-"""从业人员健康证管理"""
-from datetime import date
+"""从业人员健康证管理（删除改为归档式作废）"""
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from ..auth import ROLE_ADMIN, get_current_user, require_roles
 from ..database import get_db
 from ..models import Staff
-from ..schemas import StaffCreate, StaffOut, StaffUpdate
+from ..schemas import StaffCreate, StaffOut, StaffUpdate, VoidIn
 from ..services import log_action
 
 router = APIRouter(prefix="/api/staff", tags=["从业人员"])
@@ -25,10 +25,15 @@ def list_staff(
     status: Optional[str] = None,
     position: Optional[str] = None,
     keyword: Optional[str] = None,
+    view: str = "valid",  # valid有效(默认)/voided已作废/all全部
     db: Session = Depends(get_db),
     user: dict = Depends(get_current_user),
 ):
     q = db.query(Staff)
+    if view == "valid":
+        q = q.filter(Staff.voided_at.is_(None))
+    elif view == "voided":
+        q = q.filter(Staff.voided_at.isnot(None))
     if status:
         q = q.filter(Staff.status == status)
     if position:
@@ -64,12 +69,41 @@ def update_staff(staff_id: int, data: StaffUpdate, db: Session = Depends(get_db)
     return to_out(obj)
 
 
-@router.delete("/{staff_id}", status_code=204)
-def delete_staff(staff_id: int, db: Session = Depends(get_db),
-                 user: dict = Depends(require_roles(ROLE_ADMIN))):
+@router.post("/{staff_id}/void", response_model=StaffOut)
+def void_staff(staff_id: int, data: VoidIn, db: Session = Depends(get_db),
+               user: dict = Depends(require_roles(ROLE_ADMIN))):
+    """作废人员档案（如重复建档）：原记录保留可查"""
     obj = db.get(Staff, staff_id)
     if not obj:
         raise HTTPException(404, "人员不存在")
-    log_action(db, user, "人员删除", "staff", obj.id, f"删除从业人员「{obj.name}」")
-    db.delete(obj)
+    if obj.voided_at:
+        raise HTTPException(400, "该档案已作废")
+    if not data.reason.strip():
+        raise HTTPException(400, "请填写作废原因")
+    obj.voided_at = datetime.now()
+    obj.voided_by = user["name"]
+    obj.void_reason = data.reason.strip()
+    log_action(db, user, "人员作废", "staff", obj.id,
+               f"作废人员档案「{obj.name}」（{obj.position}），原因：{obj.void_reason}")
     db.commit()
+    db.refresh(obj)
+    return to_out(obj)
+
+
+@router.post("/{staff_id}/restore", response_model=StaffOut)
+def restore_staff(staff_id: int, db: Session = Depends(get_db),
+                  user: dict = Depends(require_roles(ROLE_ADMIN))):
+    """恢复误作废的人员档案"""
+    obj = db.get(Staff, staff_id)
+    if not obj:
+        raise HTTPException(404, "人员不存在")
+    if not obj.voided_at:
+        raise HTTPException(400, "该档案未作废")
+    log_action(db, user, "人员恢复", "staff", obj.id,
+               f"恢复人员档案「{obj.name}」（原作废原因：{obj.void_reason}）")
+    obj.voided_at = None
+    obj.voided_by = None
+    obj.void_reason = None
+    db.commit()
+    db.refresh(obj)
+    return to_out(obj)
