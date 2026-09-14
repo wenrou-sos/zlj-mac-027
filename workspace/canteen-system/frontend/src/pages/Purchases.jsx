@@ -6,6 +6,7 @@ import {
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../api'
+import { getUser, hasRole } from '../auth'
 
 const CATEGORIES = ['蔬菜', '肉类', '水产', '蛋奶', '粮油', '调味品', '水果', '其他']
 const UNITS = ['kg', 'g', 'L', '瓶', '桶', '袋', '盒', '杯', '罐', '个']
@@ -26,6 +27,7 @@ export default function Purchases() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form] = Form.useForm()
+  const canEdit = hasRole('admin', 'purchaser')  // 采购维护权限
 
   const load = async () => {
     setLoading(true)
@@ -50,7 +52,7 @@ export default function Purchases() {
   const openCreate = () => {
     setEditing(null)
     form.resetFields()
-    form.setFieldsValue({ purchase_date: dayjs(), unit: 'kg', status: '合格' })
+    form.setFieldsValue({ purchase_date: dayjs(), unit: 'kg', status: '合格', purchaser: getUser()?.name })
     setModalOpen(true)
   }
 
@@ -111,14 +113,14 @@ export default function Purchases() {
     { title: '存放位置', dataIndex: 'storage_location', width: 95 },
     {
       title: '操作', width: 120, fixed: 'right',
-      render: (_, r) => (
+      render: (_, r) => canEdit ? (
         <Space>
           <a onClick={() => openEdit(r)}>编辑</a>
           <Popconfirm title="确认删除该采购记录？" onConfirm={() => remove(r.id)}>
             <a style={{ color: '#cf1322' }}>删除</a>
           </Popconfirm>
         </Space>
-      ),
+      ) : <span style={{ color: '#bbb' }}>只读</span>,
     },
   ]
 
@@ -128,7 +130,7 @@ export default function Purchases() {
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>采购登记</Button>
+          {canEdit && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>采购登记</Button>}
         </Space>
       }
     >

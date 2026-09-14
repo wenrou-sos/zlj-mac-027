@@ -91,7 +91,7 @@ class SampleCreate(SampleBase):
 
 
 class SampleDispose(BaseModel):
-    disposed_by: str
+    disposed_by: Optional[str] = None  # 后端强制取当前登录人，客户端传值无效
 
 
 class SampleOut(SampleBase):
@@ -171,7 +171,7 @@ class RectificationComplete(BaseModel):
 
 
 class RectificationVerify(BaseModel):
-    verifier: str
+    verifier: Optional[str] = None  # 后端强制取当前登录人
 
 
 # ---------- 异常上报 ----------

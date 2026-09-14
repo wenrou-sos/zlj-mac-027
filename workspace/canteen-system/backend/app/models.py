@@ -148,3 +148,31 @@ class Setting(Base):
 
     key = Column(String(50), primary_key=True)
     value = Column(String(500))
+
+
+class User(Base):
+    """系统登录账号（按岗位分角色）"""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, nullable=False, index=True)
+    password_hash = Column(String(200), nullable=False)
+    name = Column(String(50), nullable=False)                     # 姓名
+    role = Column(String(20), nullable=False)                     # admin管理员/keeper留样人/purchaser采购员/viewer只读
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class AuditLog(Base):
+    """操作审计日志：谁在什么时候对什么做了什么"""
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, index=True)
+    username = Column(String(50))
+    user_name = Column(String(50))                                # 操作人姓名
+    role = Column(String(20))                                     # 操作人角色
+    action = Column(String(30), nullable=False, index=True)       # 操作类型：登录/留样登记/留样销毁/验收整改...
+    target_type = Column(String(30))                              # 操作对象类型
+    target_id = Column(Integer)                                   # 操作对象ID
+    detail = Column(String(500))                                  # 明细说明
+    created_at = Column(DateTime, default=datetime.now, index=True)

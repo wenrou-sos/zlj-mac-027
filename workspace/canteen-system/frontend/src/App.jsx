@@ -1,30 +1,28 @@
 import React, { useEffect, useState } from 'react'
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom'
-import { Alert, Badge, Button, Layout, List, Menu, Popover, Tag, Typography } from 'antd'
+import { Badge, Button, Layout, List, Menu, Popconfirm, Popover, Space, Tag, Typography } from 'antd'
 import {
   BellOutlined,
   DashboardOutlined,
   ExperimentOutlined,
+  FileTextOutlined,
   IdcardOutlined,
+  LogoutOutlined,
   ShoppingOutlined,
+  UserOutlined,
   WarningOutlined,
 } from '@ant-design/icons'
 import api from './api'
+import { clearAuth, getToken, getUser } from './auth'
+import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Purchases from './pages/Purchases'
 import Samples from './pages/Samples'
 import StaffPage from './pages/Staff'
 import Incidents from './pages/Incidents'
+import AuditLogs from './pages/AuditLogs'
 
 const { Header, Sider, Content } = Layout
-
-const menuItems = [
-  { key: '/', icon: <DashboardOutlined />, label: <Link to="/">仪表盘</Link> },
-  { key: '/purchases', icon: <ShoppingOutlined />, label: <Link to="/purchases">食材采购</Link> },
-  { key: '/samples', icon: <ExperimentOutlined />, label: <Link to="/samples">留样记录</Link> },
-  { key: '/staff', icon: <IdcardOutlined />, label: <Link to="/staff">健康证管理</Link> },
-  { key: '/incidents', icon: <WarningOutlined />, label: <Link to="/incidents">异常与整改</Link> },
-]
 
 const levelColor = { danger: 'red', warning: 'orange', info: 'blue' }
 const levelText = { danger: '紧急', warning: '提醒', info: '提示' }
@@ -34,6 +32,7 @@ const pageTitles = {
   '/samples': '食品留样记录',
   '/staff': '从业人员健康证',
   '/incidents': '异常上报与整改跟踪',
+  '/audit': '操作日志',
 }
 
 function AlertBell() {
@@ -74,8 +73,18 @@ function AlertBell() {
   )
 }
 
-function Shell() {
+function Shell({ user, onLogout }) {
   const location = useLocation()
+  const menuItems = [
+    { key: '/', icon: <DashboardOutlined />, label: <Link to="/">仪表盘</Link> },
+    { key: '/purchases', icon: <ShoppingOutlined />, label: <Link to="/purchases">食材采购</Link> },
+    { key: '/samples', icon: <ExperimentOutlined />, label: <Link to="/samples">留样记录</Link> },
+    { key: '/staff', icon: <IdcardOutlined />, label: <Link to="/staff">健康证管理</Link> },
+    { key: '/incidents', icon: <WarningOutlined />, label: <Link to="/incidents">异常与整改</Link> },
+    ...(user.role === 'admin'
+      ? [{ key: '/audit', icon: <FileTextOutlined />, label: <Link to="/audit">操作日志</Link> }]
+      : []),
+  ]
   const selected = menuItems.find((m) => m.key === location.pathname)?.key ?? '/'
 
   return (
@@ -101,7 +110,17 @@ function Shell() {
           <Typography.Text style={{ color: '#fff', fontSize: 15 }}>
             {pageTitles[selected] ?? ''}
           </Typography.Text>
-          <AlertBell />
+          <Space size="middle">
+            <AlertBell />
+            <Space size={4}>
+              <UserOutlined style={{ color: '#fff' }} />
+              <Typography.Text style={{ color: '#fff' }}>{user.name}</Typography.Text>
+              <Tag color="gold" style={{ marginLeft: 2 }}>{user.role_name}</Tag>
+            </Space>
+            <Popconfirm title="确认退出登录？" onConfirm={onLogout} okText="退出" cancelText="取消">
+              <Button type="text" icon={<LogoutOutlined style={{ color: '#fff' }} />} />
+            </Popconfirm>
+          </Space>
         </Header>
         <Content style={{ padding: 20, background: '#f0f2f5' }}>
           <Routes>
@@ -110,6 +129,7 @@ function Shell() {
             <Route path="/samples" element={<Samples />} />
             <Route path="/staff" element={<StaffPage />} />
             <Route path="/incidents" element={<Incidents />} />
+            {user.role === 'admin' && <Route path="/audit" element={<AuditLogs />} />}
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </Content>
@@ -119,9 +139,20 @@ function Shell() {
 }
 
 export default function App() {
+  const [user, setUser] = useState(getUser())
+
+  if (!user || !getToken()) {
+    return <Login onLogin={setUser} />
+  }
+
+  const logout = () => {
+    clearAuth()
+    setUser(null)
+  }
+
   return (
     <BrowserRouter>
-      <Shell />
+      <Shell user={user} onLogout={logout} />
     </BrowserRouter>
   )
 }

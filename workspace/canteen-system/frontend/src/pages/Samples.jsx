@@ -6,6 +6,7 @@ import {
 import { DeleteOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../api'
+import { getUser, hasRole } from '../auth'
 
 const MEAL_TYPES = ['早餐', '午餐', '晚餐', '加餐']
 
@@ -24,8 +25,10 @@ export default function Samples() {
   const [filters, setFilters] = useState({})
   const [modalOpen, setModalOpen] = useState(false)
   const [disposeTarget, setDisposeTarget] = useState(null)
-  const [disposedBy, setDisposedBy] = useState('')
   const [form] = Form.useForm()
+  const user = getUser()
+  const canOperate = hasRole('admin', 'keeper')  // 留样登记/销毁权限
+  const isAdmin = hasRole('admin')
 
   const load = async () => {
     setLoading(true)
@@ -54,14 +57,10 @@ export default function Samples() {
   }
 
   const confirmDispose = async () => {
-    if (!disposedBy.trim()) {
-      message.warning('请填写销毁人')
-      return
-    }
-    await api.post(`/samples/${disposeTarget.id}/dispose`, { disposed_by: disposedBy.trim() })
+    // 销毁人由后端从登录账号取
+    await api.post(`/samples/${disposeTarget.id}/dispose`, {})
     message.success('销毁登记完成')
     setDisposeTarget(null)
-    setDisposedBy('')
     load()
   }
 
@@ -88,7 +87,7 @@ export default function Samples() {
       title: '操作', width: 150, fixed: 'right',
       render: (_, r) => (
         <Space>
-          {r.status === '留样中' && (
+          {r.status === '留样中' && canOperate && (
             r.remaining_hours <= 0 ? (
               <a onClick={() => setDisposeTarget(r)}>销毁登记</a>
             ) : (
@@ -97,9 +96,11 @@ export default function Samples() {
               </span>
             )
           )}
-          <Popconfirm title="确认删除该留样记录？" onConfirm={async () => { await api.delete(`/samples/${r.id}`); load() }}>
-            <a style={{ color: '#cf1322' }}>删除</a>
-          </Popconfirm>
+          {isAdmin && (
+            <Popconfirm title="确认删除该留样记录？" onConfirm={async () => { await api.delete(`/samples/${r.id}`); load() }}>
+              <a style={{ color: '#cf1322' }}>删除</a>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -111,10 +112,12 @@ export default function Samples() {
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />}
-            onClick={() => { form.resetFields(); form.setFieldsValue({ sample_time: dayjs(), weight_grams: 125 }); setModalOpen(true) }}>
-            留样登记
-          </Button>
+          {canOperate && (
+            <Button type="primary" icon={<PlusOutlined />}
+              onClick={() => { form.resetFields(); form.setFieldsValue({ sample_time: dayjs(), weight_grams: 125, keeper: user?.name }); setModalOpen(true) }}>
+              留样登记
+            </Button>
+          )}
         </Space>
       }
     >
@@ -205,7 +208,7 @@ export default function Samples() {
         title={`销毁登记：${disposeTarget?.dish_name ?? ''}`}
         open={!!disposeTarget}
         onOk={confirmDispose}
-        onCancel={() => { setDisposeTarget(null); setDisposedBy('') }}
+        onCancel={() => setDisposeTarget(null)}
         okText="确认销毁"
         cancelText="取消"
       >
@@ -213,11 +216,7 @@ export default function Samples() {
           该留样于 {disposeTarget && dayjs(disposeTarget.sample_time).format('MM-DD HH:mm')} 留样，
           48小时保存期已满。确认销毁后不可恢复。
         </p>
-        <Input
-          placeholder="销毁人姓名"
-          value={disposedBy}
-          onChange={(e) => setDisposedBy(e.target.value)}
-        />
+        <p>销毁人：<b>{user?.name}</b>（当前登录账号，自动记录）</p>
       </Modal>
 
       <style>{`.row-overdue td { background: #fff1f0 !important; }`}</style>

@@ -6,6 +6,7 @@ import {
 import { MinusCircleOutlined, PlusOutlined, ReloadOutlined, SafetyCertificateOutlined, SettingOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../api'
+import { getUser, hasRole } from '../auth'
 
 const CATEGORIES = ['食材异常', '留样异常', '健康证异常', '环境卫生', '设备故障', '投诉', '其他']
 const SEVERITIES = ['一般', '较重', '严重']
@@ -27,6 +28,8 @@ export default function Incidents() {
   const [form] = Form.useForm()
   const [rectForm] = Form.useForm()
   const [cfgForm] = Form.useForm()
+  const user = getUser()
+  const isAdmin = hasRole('admin')  // 工单处理/整改/巡检配置仅食品安全管理员
 
   const load = async () => {
     setLoading(true)
@@ -105,7 +108,8 @@ export default function Incidents() {
   }
 
   const verify = async (rect) => {
-    await api.post(`/rectifications/${rect.id}/verify`, { verifier: '管理员' })
+    // 验收人由后端从登录账号取
+    await api.post(`/rectifications/${rect.id}/verify`, {})
     message.success('验收通过')
     load()
   }
@@ -132,8 +136,8 @@ export default function Incidents() {
       title: '操作', width: 150, fixed: 'right',
       render: (_, r) => (
         <Space>
-          <a onClick={() => setDetail(r)}>详情/整改</a>
-          {(r.status === '待处理' || r.status === '已整改') && (
+          <a onClick={() => setDetail(r)}>详情{isAdmin && '/整改'}</a>
+          {isAdmin && (r.status === '待处理' || r.status === '已整改') && (
             <Popconfirm title="确认关闭该工单？" onConfirm={() => closeIncident(r.id)}>
               <a>关闭</a>
             </Popconfirm>
@@ -148,12 +152,14 @@ export default function Incidents() {
       title="异常上报与整改跟踪"
       extra={
         <Space>
-          <Button icon={<SafetyCertificateOutlined />} onClick={runInspection}>系统巡检</Button>
+          {isAdmin && <Button icon={<SafetyCertificateOutlined />} onClick={runInspection}>系统巡检</Button>}
           <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />}
-            onClick={() => { form.resetFields(); form.setFieldsValue({ severity: '一般' }); setReportOpen(true) }}>
-            异常上报
-          </Button>
+          {isAdmin && (
+            <Button type="primary" icon={<PlusOutlined />}
+              onClick={() => { form.resetFields(); form.setFieldsValue({ severity: '一般' }); setReportOpen(true) }}>
+              异常上报
+            </Button>
+          )}
         </Space>
       }
     >
@@ -186,7 +192,7 @@ export default function Incidents() {
               {insp.enabled && insp.next_run_at && (
                 <span>下次运行：{dayjs(insp.next_run_at).format('MM-DD HH:mm')}</span>
               )}
-              <a onClick={openCfg}><SettingOutlined /> 配置</a>
+              {isAdmin && <a onClick={openCfg}><SettingOutlined /> 配置</a>}
             </Space>
           }
         />
@@ -237,8 +243,8 @@ export default function Incidents() {
             <Form.Item name="severity" label="严重程度" rules={[{ required: true }]} style={{ flex: 1, marginRight: 12 }}>
               <Select options={SEVERITIES.map((s) => ({ value: s, label: s }))} />
             </Form.Item>
-            <Form.Item name="reporter" label="上报人" rules={[{ required: true, message: '请填写上报人' }]} style={{ flex: 1 }}>
-              <Input />
+            <Form.Item label="上报人" style={{ flex: 1 }}>
+              <Input value={`${user?.name}（当前登录人）`} disabled />
             </Form.Item>
           </Space.Compact>
           <Form.Item name="description" label="详细描述" rules={[{ required: true, message: '请填写详细描述' }]}>
@@ -254,7 +260,7 @@ export default function Incidents() {
         onClose={() => setDetail(null)}
         width={560}
         extra={
-          detail && detail.status !== '已关闭' && (
+          detail && detail.status !== '已关闭' && isAdmin && (
             <Button type="primary" onClick={() => { rectForm.resetFields(); setRectOpen(true) }}>
               下达整改任务
             </Button>
@@ -301,12 +307,12 @@ export default function Incidents() {
                         </div>
                       )}
                       <Space style={{ marginTop: 6 }}>
-                        {r.status !== '已完成' && (
+                        {isAdmin && r.status !== '已完成' && (
                           <Button size="small" onClick={() => { setCompleteTarget(r); setCompleteResult('') }}>
                             完成整改
                           </Button>
                         )}
-                        {r.status === '已完成' && !r.verifier && (
+                        {isAdmin && r.status === '已完成' && !r.verifier && (
                           <Button size="small" type="primary" onClick={() => verify(r)}>
                             验收通过
                           </Button>

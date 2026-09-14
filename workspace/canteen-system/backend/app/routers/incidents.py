@@ -1,16 +1,20 @@
-"""异常上报 + 整改跟踪"""
+"""异常上报 + 整改跟踪（写操作仅食品安全管理员；上报人/验收人从登录账号取）"""
 from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from ..auth import ROLE_ADMIN, get_current_user, require_roles
 from ..database import get_db
 from ..models import Incident, Rectification
 from ..schemas import (IncidentCreate, IncidentOut, RectificationComplete,
                        RectificationCreate, RectificationOut, RectificationVerify)
+from ..services import log_action
 
 router = APIRouter(prefix="/api", tags=["异常与整改"])
+
+ADMIN_ONLY = Depends(require_roles(ROLE_ADMIN))
 
 
 def rect_to_out(r: Rectification) -> dict:
@@ -33,6 +37,7 @@ def list_incidents(
     severity: Optional[str] = None,
     keyword: Optional[str] = None,
     db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
     q = db.query(Incident)
     if category:
@@ -47,38 +52,48 @@ def list_incidents(
 
 
 @router.post("/incidents", response_model=IncidentOut, status_code=201)
-def create_incident(data: IncidentCreate, db: Session = Depends(get_db)):
-    obj = Incident(**data.model_dump(), reported_at=datetime.now())
+def create_incident(data: IncidentCreate, db: Session = Depends(get_db),
+                    user: dict = ADMIN_ONLY):
+    payload = data.model_dump()
+    payload["reporter"] = user["name"]  # 上报人强制取当前登录人
+    obj = Incident(**payload, reported_at=datetime.now())
     db.add(obj)
+    db.flush()
+    log_action(db, user, "异常上报", "incident", obj.id, f"上报「{obj.title}」（{obj.category}/{obj.severity}）")
     db.commit()
     db.refresh(obj)
     return incident_to_out(obj)
 
 
 @router.post("/incidents/{incident_id}/close", response_model=IncidentOut)
-def close_incident(incident_id: int, db: Session = Depends(get_db)):
+def close_incident(incident_id: int, db: Session = Depends(get_db),
+                   user: dict = ADMIN_ONLY):
     obj = db.get(Incident, incident_id)
     if not obj:
         raise HTTPException(404, "异常工单不存在")
     obj.status = "已关闭"
     obj.closed_at = datetime.now()
+    log_action(db, user, "关闭工单", "incident", obj.id, f"关闭工单「{obj.title}」")
     db.commit()
     db.refresh(obj)
     return incident_to_out(obj)
 
 
 @router.delete("/incidents/{incident_id}", status_code=204)
-def delete_incident(incident_id: int, db: Session = Depends(get_db)):
+def delete_incident(incident_id: int, db: Session = Depends(get_db),
+                    user: dict = ADMIN_ONLY):
     obj = db.get(Incident, incident_id)
     if not obj:
         raise HTTPException(404, "异常工单不存在")
+    log_action(db, user, "删除工单", "incident", obj.id, f"删除工单「{obj.title}」")
     db.delete(obj)
     db.commit()
 
 
 # ---------- 整改跟踪 ----------
 @router.get("/rectifications", response_model=list[RectificationOut])
-def list_rectifications(status: Optional[str] = None, db: Session = Depends(get_db)):
+def list_rectifications(status: Optional[str] = None, db: Session = Depends(get_db),
+                        user: dict = Depends(get_current_user)):
     q = db.query(Rectification)
     if status:
         q = q.filter(Rectification.status == status)
@@ -86,20 +101,25 @@ def list_rectifications(status: Optional[str] = None, db: Session = Depends(get_
 
 
 @router.post("/rectifications", response_model=RectificationOut, status_code=201)
-def create_rectification(data: RectificationCreate, db: Session = Depends(get_db)):
+def create_rectification(data: RectificationCreate, db: Session = Depends(get_db),
+                         user: dict = ADMIN_ONLY):
     incident = db.get(Incident, data.incident_id)
     if not incident:
         raise HTTPException(404, "关联的异常工单不存在")
     obj = Rectification(**data.model_dump(), started_at=datetime.now(), status="整改中")
     incident.status = "整改中"
     db.add(obj)
+    db.flush()
+    log_action(db, user, "下达整改", "rectification", obj.id,
+               f"就工单「{incident.title}」下达整改，责任人{obj.responsible}，期限{obj.deadline}")
     db.commit()
     db.refresh(obj)
     return rect_to_out(obj)
 
 
 @router.post("/rectifications/{rect_id}/complete", response_model=RectificationOut)
-def complete_rectification(rect_id: int, data: RectificationComplete, db: Session = Depends(get_db)):
+def complete_rectification(rect_id: int, data: RectificationComplete, db: Session = Depends(get_db),
+                           user: dict = ADMIN_ONLY):
     obj = db.get(Rectification, rect_id)
     if not obj:
         raise HTTPException(404, "整改任务不存在")
@@ -108,14 +128,17 @@ def complete_rectification(rect_id: int, data: RectificationComplete, db: Sessio
     obj.status = "已完成"
     obj.completed_at = datetime.now()
     obj.result = data.result
+    log_action(db, user, "完成整改", "rectification", obj.id, f"整改完成：{data.result[:80]}")
     db.commit()
     db.refresh(obj)
     return rect_to_out(obj)
 
 
 @router.post("/rectifications/{rect_id}/verify", response_model=RectificationOut)
-def verify_rectification(rect_id: int, data: RectificationVerify, db: Session = Depends(get_db)):
-    """验收整改任务；仅当工单下所有整改任务均验收通过后，工单才标记为已整改"""
+def verify_rectification(rect_id: int, data: RectificationVerify, db: Session = Depends(get_db),
+                         user: dict = ADMIN_ONLY):
+    """验收整改任务（验收人强制取当前登录账号）；
+    仅当工单下所有整改任务均验收通过后，工单才标记为已整改"""
     obj = db.get(Rectification, rect_id)
     if not obj:
         raise HTTPException(404, "整改任务不存在")
@@ -123,7 +146,7 @@ def verify_rectification(rect_id: int, data: RectificationVerify, db: Session = 
         raise HTTPException(400, "请先完成整改再验收")
     if obj.verified_at:
         raise HTTPException(400, "该整改任务已验收")
-    obj.verifier = data.verifier
+    obj.verifier = user["name"]  # 验收人从登录账号取，不接受客户端传值
     obj.verified_at = datetime.now()
     # 全部整改任务均完成且验收通过，工单才可标记为已整改
     all_verified = all(
@@ -132,6 +155,8 @@ def verify_rectification(rect_id: int, data: RectificationVerify, db: Session = 
     )
     if all_verified:
         obj.incident.status = "已整改"
+    log_action(db, user, "验收整改", "rectification", obj.id,
+               f"验收通过整改#{obj.id}（工单「{obj.incident.title}」）")
     db.commit()
     db.refresh(obj)
     return rect_to_out(obj)

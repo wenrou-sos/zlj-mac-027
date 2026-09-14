@@ -2,14 +2,19 @@
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from ..auth import ROLE_ADMIN, ROLE_PURCHASER, get_current_user, require_roles
 from ..database import get_db
 from ..models import Purchase
 from ..schemas import PurchaseCreate, PurchaseOut, PurchaseUpdate
+from ..services import log_action
 
 router = APIRouter(prefix="/api/purchases", tags=["食材采购"])
+
+# 采购维护：食品安全管理员、采购员
+PURCHASE_ROLES = (ROLE_ADMIN, ROLE_PURCHASER)
 
 
 def to_out(p: Purchase) -> dict:
@@ -27,6 +32,7 @@ def list_purchases(
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     db: Session = Depends(get_db),
+    user: dict = Depends(get_current_user),
 ):
     q = db.query(Purchase)
     if category:
@@ -43,31 +49,41 @@ def list_purchases(
 
 
 @router.post("", response_model=PurchaseOut, status_code=201)
-def create_purchase(data: PurchaseCreate, db: Session = Depends(get_db)):
+def create_purchase(data: PurchaseCreate, db: Session = Depends(get_db),
+                    user: dict = Depends(require_roles(*PURCHASE_ROLES))):
     obj = Purchase(**data.model_dump(), total_price=round(data.quantity * data.unit_price, 2))
     db.add(obj)
+    db.flush()
+    log_action(db, user, "采购登记", "purchase", obj.id,
+               f"登记采购「{obj.ingredient_name}」{obj.quantity}{obj.unit}，¥{obj.total_price}")
     db.commit()
     db.refresh(obj)
     return to_out(obj)
 
 
 @router.put("/{purchase_id}", response_model=PurchaseOut)
-def update_purchase(purchase_id: int, data: PurchaseUpdate, db: Session = Depends(get_db)):
+def update_purchase(purchase_id: int, data: PurchaseUpdate, db: Session = Depends(get_db),
+                    user: dict = Depends(require_roles(*PURCHASE_ROLES))):
     obj = db.get(Purchase, purchase_id)
     if not obj:
         raise HTTPException(404, "采购记录不存在")
     for k, v in data.model_dump(exclude_unset=True).items():
         setattr(obj, k, v)
     obj.total_price = round(obj.quantity * obj.unit_price, 2)
+    log_action(db, user, "采购修改", "purchase", obj.id,
+               f"修改采购「{obj.ingredient_name}」记录")
     db.commit()
     db.refresh(obj)
     return to_out(obj)
 
 
 @router.delete("/{purchase_id}", status_code=204)
-def delete_purchase(purchase_id: int, db: Session = Depends(get_db)):
+def delete_purchase(purchase_id: int, db: Session = Depends(get_db),
+                    user: dict = Depends(require_roles(*PURCHASE_ROLES))):
     obj = db.get(Purchase, purchase_id)
     if not obj:
         raise HTTPException(404, "采购记录不存在")
+    log_action(db, user, "采购作废", "purchase", obj.id,
+               f"作废采购「{obj.ingredient_name}」{obj.quantity}{obj.unit}记录")
     db.delete(obj)
     db.commit()

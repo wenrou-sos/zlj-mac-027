@@ -6,6 +6,7 @@ import {
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import api from '../api'
+import { hasRole } from '../auth'
 
 const POSITIONS = ['厨师长', '厨师', '面点师', '帮厨', '洗碗工', '采购员', '仓管员', '服务员']
 
@@ -23,6 +24,7 @@ export default function StaffPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form] = Form.useForm()
+  const isAdmin = hasRole('admin')  // 人员档案仅食品安全管理员维护
 
   const load = async () => {
     setLoading(true)
@@ -93,14 +95,14 @@ export default function StaffPage() {
     ) },
     {
       title: '操作', width: 120, fixed: 'right',
-      render: (_, r) => (
+      render: (_, r) => isAdmin ? (
         <Space>
           <a onClick={() => openEdit(r)}>编辑</a>
           <Popconfirm title="确认删除该人员？" onConfirm={async () => { await api.delete(`/staff/${r.id}`); message.success('已删除'); load() }}>
             <a style={{ color: '#cf1322' }}>删除</a>
           </Popconfirm>
         </Space>
-      ),
+      ) : <span style={{ color: '#bbb' }}>只读</span>,
     },
   ]
 
@@ -110,7 +112,7 @@ export default function StaffPage() {
       extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>人员登记</Button>
+          {isAdmin && <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>人员登记</Button>}
         </Space>
       }
     >

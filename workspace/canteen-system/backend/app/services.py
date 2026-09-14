@@ -4,7 +4,25 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from .models import Incident, InspectionRun, Purchase, Rectification, Sample, Setting, Staff
+from .models import (AuditLog, Incident, InspectionRun, Purchase,
+                     Rectification, Sample, Setting, Staff)
+
+
+def log_action(db: Session, user: dict, action: str,
+               target_type: str | None = None, target_id: int | None = None,
+               detail: str = "") -> None:
+    """写入操作审计日志（随当前事务一并提交）"""
+    db.add(AuditLog(
+        user_id=user.get("uid"),
+        username=user.get("username"),
+        user_name=user.get("name"),
+        role=user.get("role"),
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        detail=detail[:500],
+        created_at=datetime.now(),
+    ))
 
 # 预警阈值常量
 SAMPLE_RETENTION_HOURS = 48      # 留样保存时长(小时)

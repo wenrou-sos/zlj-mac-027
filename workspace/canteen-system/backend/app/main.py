@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .database import Base, SessionLocal, engine
-from .routers import dashboard, incidents, inspection, purchases, samples, staff, suppliers
+from .routers import auth, dashboard, incidents, inspection, purchases, samples, staff, suppliers
 from .scheduler import start_scheduler, stop_scheduler
 from .seed import seed
 
@@ -16,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (dashboard.router, suppliers.router, purchases.router,
+for r in (auth.router, dashboard.router, suppliers.router, purchases.router,
           samples.router, staff.router, incidents.router, inspection.router):
     app.include_router(r)
 

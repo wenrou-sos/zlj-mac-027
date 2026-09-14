@@ -3,10 +3,31 @@ from datetime import date, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
-from .models import Incident, Purchase, Rectification, Sample, Staff, Supplier
+from .auth import hash_password
+from .models import Incident, Purchase, Rectification, Sample, Staff, Supplier, User
+
+# 演示账号（仅本地模拟环境使用，生产环境请删除并修改 SECRET_KEY）
+DEMO_USERS = [
+    ("admin", "admin123", "王品安", "admin"),
+    ("keeper", "keeper123", "周建国", "keeper"),
+    ("purchaser", "purchaser123", "刘强", "purchaser"),
+    ("viewer", "viewer123", "检查员", "viewer"),
+]
+
+
+def seed_users(db: Session) -> None:
+    """初始化演示账号（独立调用，用户表为空时写入）"""
+    if db.query(User).count() > 0:
+        return
+    for username, password, name, role in DEMO_USERS:
+        db.add(User(username=username, password_hash=hash_password(password),
+                    name=name, role=role))
+    db.commit()
+    print("✅ 演示账号初始化完成：admin/keeper/purchaser/viewer（密码均为 角色名+123）")
 
 
 def seed(db: Session) -> None:
+    seed_users(db)
     if db.query(Supplier).count() > 0:
         return  # 已有数据则跳过
 

@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from ..auth import get_current_user
 from ..database import get_db
 from ..models import Incident, Purchase, Rectification, Sample, Staff
 from ..schemas import Alert
@@ -14,12 +15,12 @@ router = APIRouter(prefix="/api", tags=["仪表盘"])
 
 
 @router.get("/alerts", response_model=list[Alert])
-def get_alerts(db: Session = Depends(get_db)):
+def get_alerts(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     return compute_alerts(db)
 
 
 @router.get("/dashboard")
-def dashboard(db: Session = Depends(get_db)):
+def dashboard(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     now = datetime.now()
     today = date.today()
     month_start = today.replace(day=1)
